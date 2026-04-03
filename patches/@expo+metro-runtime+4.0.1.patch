@@ -1,0 +1,75 @@
+diff --git a/node_modules/@expo/metro-runtime/src/messageSocket.native.ts b/node_modules/@expo/metro-runtime/src/messageSocket.native.ts
+index 1d7c933..d25e956 100644
+--- a/node_modules/@expo/metro-runtime/src/messageSocket.native.ts
++++ b/node_modules/@expo/metro-runtime/src/messageSocket.native.ts
+@@ -1,7 +1,10 @@
+ /* eslint-env browser */
+ 
+ function createWebSocketConnection(path: string = '/message') {
+-  const getDevServer = require('react-native/Libraries/Core/Devtools/getDevServer');
++  const getDevServerModule = require('react-native/Libraries/Core/Devtools/getDevServer');
++  // RN 0.81+ usa "export default" (ESM), así que require() devuelve { default: fn }.
++  // Soportamos ambos formatos: módulo CJS (la función directamente) y ESM (con .default).
++  const getDevServer = getDevServerModule.default ?? getDevServerModule;
+   const devServer = getDevServer();
+   if (!devServer.bundleLoadedFromServer) {
+     throw new Error('Cannot create devtools websocket connections in embedded environments.');
+@@ -13,27 +16,34 @@ function createWebSocketConnection(path: string = '/message') {
+   return new WebSocket(`${serverScheme}://${devServerUrl.host}${path}`);
+ }
+ 
+-createWebSocketConnection().onmessage = (message) => {
+-  const data = JSON.parse(String(message.data));
+-  switch (data.method) {
+-    case 'sendDevCommand':
+-      switch (data.params.name) {
+-        case 'rsc-reload':
+-          if (data.params.platform && data.params.platform !== process.env.EXPO_OS) {
+-            return;
+-          }
+-          console.log(
+-            'HMR(Client): Reload received from server. Sending to listeners:',
+-            globalThis.__EXPO_RSC_RELOAD_LISTENERS__?.length
+-          );
+-          if (!globalThis.__EXPO_RSC_RELOAD_LISTENERS__) {
+-            // server function-only mode
+-          } else {
+-            globalThis.__EXPO_RSC_RELOAD_LISTENERS__?.forEach((l) => l());
+-          }
+-          break;
+-      }
+-      break;
+-    // NOTE: All other cases are handled in the native runtime.
+-  }
+-};
++// Esta conexión WebSocket solo es necesaria para React Server Components (RSC).
++// GeoTask no usa RSC, así que ignoramos cualquier error al establecerla.
++// Compatibilidad: RN 0.81 + Expo SDK 54.
++try {
++  createWebSocketConnection().onmessage = (message) => {
++    const data = JSON.parse(String(message.data));
++    switch (data.method) {
++      case 'sendDevCommand':
++        switch (data.params.name) {
++          case 'rsc-reload':
++            if (data.params.platform && data.params.platform !== process.env.EXPO_OS) {
++              return;
++            }
++            console.log(
++              'HMR(Client): Reload received from server. Sending to listeners:',
++              globalThis.__EXPO_RSC_RELOAD_LISTENERS__?.length
++            );
++            if (!globalThis.__EXPO_RSC_RELOAD_LISTENERS__) {
++              // server function-only mode
++            } else {
++              globalThis.__EXPO_RSC_RELOAD_LISTENERS__?.forEach((l) => l());
++            }
++            break;
++        }
++        break;
++      // NOTE: All other cases are handled in the native runtime.
++    }
++  };
++} catch (_e) {
++  // No usamos RSC — ignorar errores de conexión WebSocket del dev server
++}

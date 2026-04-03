@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "GeoTask",
+    "slug": "geotask",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "scheme": "geotask",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#4648d4"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.chanlusoft.geotask",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "GeoTask necesita tu ubicación para avisarte cuando estés cerca de un lugar donde tienes tareas pendientes.",
+        "NSLocationAlwaysUsageDescription": "GeoTask necesita tu ubicación en segundo plano para detectar cuando te acercas a lugares con tareas pendientes.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "GeoTask necesita tu ubicación en segundo plano para el sistema de geocercas.",
+        "NSCalendarsUsageDescription": "GeoTask puede añadir tus tareas con fecha límite al calendario del dispositivo.",
+        "NSPhotoLibraryUsageDescription": "GeoTask puede adjuntar fotos de tu galería a las tareas.",
+        "NSCameraUsageDescription": "GeoTask puede tomar fotos para adjuntar a tus tareas."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4648d4"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.chanlusoft.geotask",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "SCHEDULE_EXACT_ALARM",
+        "READ_CALENDAR",
+        "WRITE_CALENDAR",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "GeoTask necesita tu ubicación para el sistema de geocercas."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#4648d4"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

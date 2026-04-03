@@ -1,0 +1,28 @@
+
+## 1. Resumen para el Plan de Desarrollo
+La aplicación se concibe como un asistente de "mandados" y compras que optimiza los desplazamientos del usuario mediante avisos por proximidad.
+
+* **Funcionalidad principal:** Crear tareas o listas de compra asociadas a lugares específicos.
+* **Sistema de Alertas:** Notificaciones push cuando el usuario entra en un radio configurable (200m, 500m, etc.) de una tarea pendiente.
+* **Componentes de la Tarea:**
+    * Descripción del mandado.
+    * Ubicación geográfica exacta.
+    * Radio de proximidad personalizable (geocerca).
+    * Categorización (compras, papeleo, bancos).
+    * Fecha de vencimiento o rango de fecha, no obligatorio.
+* **Interfaz y Visualización:**
+    * Uso exclusivo en formato App móvil.
+    * Vista de mapa que muestra todas las tareas pendientes según su ubicación, al margen de las franjas horarias.
+    * Buscador para consultar tareas en zonas específicas antes de ir (ej. "Nervión").
+* Debe usarse algun sitema que permita reconocer al usuario, identificación mediante usuario y contraseña o mediante cuanta, google, apple, microsoft, etc. Para ello busca siempre recursos gratuitos y de código abierto.
+* Debe usarse un sistema de base de datos que permita almacenar las tareas y los usuarios. Para ello busca siempre recursos gratuitos y de código abierto.
+
+---
+
+## 2. Análisis y Sugerencias de Mejora
+
+* **Horarios de Apertura Inteligentes:** En la conversación se menciona el riesgo de que la app avise cuando el lugar ya está cerrado. Una mejora crítica sería integrar una API (como Google Places) para que la app **solo notifique si el establecimiento está abierto** en ese momento.
+* **Modos de Transporte:** El radio de 500m es ideal para peatones, pero escaso para alguien en coche. Sugiero ajustar el radio de aviso dinámicamente según la velocidad de desplazamiento del usuario.
+* **Gestión de Batería:** El uso constante del GPS puede agotar el móvil. Se debería implementar una monitorización de bajo consumo que se active solo cuando el sistema detecte movimiento significativo.
+* **Listas Compartidas:** Para tareas del hogar o compras, permitir que varios usuarios (ej. una pareja) añadan tareas al mismo mapa.
+
