@@ -41,7 +41,9 @@
         "WRITE_CALENDAR",
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -63,10 +65,19 @@
           "icon": "./assets/icon.png",
           "color": "#4648d4"
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "828db1ae-177b-45e8-8669-f0965885630e"
+      }
     }
   }
 }

@@ -20,7 +20,7 @@
  * ============================================================
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -31,12 +31,12 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { useUbicacion } from '../../src/hooks/useUbicacion';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useTareaStore } from '../../src/stores/useTareaStore';
+import { useTareaStore, useTareaPorId } from '../../src/stores/useTareaStore';
 import { useCategoriaStore } from '../../src/stores/useCategoriaStore';
 import { EntradaTexto } from '../../src/components/ui/EntradaTexto';
 import { Boton } from '../../src/components/ui/Boton';
@@ -55,18 +55,28 @@ const OPCIONES_PRIORIDAD: { valor: Prioridad; etiqueta: string; color: string }[
 
 export default function PantallaNuevaTarea() {
   const enrutador = useRouter();
-  // Params que llegan desde el mapa cuando el usuario hace long-press
+  // Params disponibles:
+  // - lat/lon/nombre/direccion/osmId → desde el mapa (long-press)
+  // - editarId → desde la pantalla de detalle (botón editar)
   const params = useLocalSearchParams<{
     lat?: string;
     lon?: string;
     nombre?: string;
     direccion?: string;
     osmId?: string;
+    editarId?: string;
   }>();
+
   const crearTarea = useTareaStore((s) => s.crearTarea);
+  const actualizarTarea = useTareaStore((s) => s.actualizarTarea);
   const cargando = useTareaStore((s) => s.cargando);
   const { categorias, cargarCategorias } = useCategoriaStore();
   const ubicacion = useUbicacion();
+
+  // Si estamos en modo edición, obtenemos la tarea existente del store.
+  // useTareaPorId busca tanto en pendientes como en completadas.
+  const tareaAEditar = useTareaPorId(params.editarId ?? '');
+  const modoEdicion = !!params.editarId;
 
   // ── Estado del formulario ──────────────────
   const [titulo, setTitulo] = useState('');
@@ -76,6 +86,30 @@ export default function PantallaNuevaTarea() {
   const [radio, setRadio] = useState(500); // 500m por defecto
   const [prioridad, setPrioridad] = useState<Prioridad>('media');
   const [errores, setErrores] = useState<Record<string, string>>({});
+  // resetKey: al incrementar, fuerza que BuscadorLugares se desmonte y remonte,
+  // limpiando su estado interno (texto del input de búsqueda).
+  const [resetKey, setResetKey] = useState(0);
+
+  // ── Reset al entrar en la pantalla (solo modo creación) ──────────────────
+  // useFocusEffect se ejecuta cada vez que esta pantalla recibe el foco.
+  // En los tabs, la pantalla no se desmonta al cambiar de pestaña, así que
+  // sin este reset los datos del formulario anterior quedarían visibles.
+  useFocusEffect(
+    useCallback(() => {
+      if (!modoEdicion) {
+        // Modo creación: limpiar todo para empezar desde cero
+        setTitulo('');
+        setDescripcion('');
+        setLugarSeleccionado(null);
+        setCategoriaId(null);
+        setRadio(500);
+        setPrioridad('media');
+        setErrores({});
+        // Incrementar la key fuerza el remontaje de BuscadorLugares
+        setResetKey((k) => k + 1);
+      }
+    }, [modoEdicion])
+  );
 
   useEffect(() => {
     // Cargamos categorías al montar (si no están ya cargadas)
@@ -83,7 +117,7 @@ export default function PantallaNuevaTarea() {
       cargarCategorias();
     }
     // Si venimos del mapa con coordenadas pre-rellenadas, montamos el lugar
-    if (params.lat && params.lon) {
+    if (!modoEdicion && params.lat && params.lon) {
       setLugarSeleccionado({
         osmId: params.osmId ?? '',
         nombre: params.nombre ?? 'Ubicación seleccionada',
@@ -96,6 +130,30 @@ export default function PantallaNuevaTarea() {
       });
     }
   }, []);
+
+  // ── Pre-rellenar formulario en modo edición ──────────────────────────────
+  // Cuando se carga la tarea a editar, copiamos todos sus datos al formulario.
+  // La dependencia es tareaAEditar?.id para que solo se ejecute una vez al montar.
+  useEffect(() => {
+    if (modoEdicion && tareaAEditar) {
+      setTitulo(tareaAEditar.titulo);
+      setDescripcion(tareaAEditar.descripcion ?? '');
+      setCategoriaId(tareaAEditar.categoriaId);
+      setRadio(tareaAEditar.radioProximidad);
+      setPrioridad(tareaAEditar.prioridad);
+      // Reconstruimos un ResultadoBusquedaLugar con los datos de la tarea
+      setLugarSeleccionado({
+        osmId: tareaAEditar.osmId ?? '',
+        nombre: tareaAEditar.nombreLugar ?? 'Ubicación guardada',
+        direccionCompleta: tareaAEditar.direccion,
+        componentes: {},
+        coordenadas: {
+          latitud: tareaAEditar.latitud,
+          longitud: tareaAEditar.longitud,
+        },
+      });
+    }
+  }, [tareaAEditar?.id]);
 
   // ── Validación del formulario ──────────────
   function validar(): boolean {
@@ -119,7 +177,7 @@ export default function PantallaNuevaTarea() {
     return Object.keys(nuevosErrores).length === 0;
   }
 
-  // ── Guardar tarea ──────────────────────────
+  // ── Guardar tarea (creación o edición) ────────────────────────────────────
   async function manejarGuardar() {
     if (!validar() || !lugarSeleccionado) return;
 
@@ -132,29 +190,47 @@ export default function PantallaNuevaTarea() {
         await Location.requestBackgroundPermissionsAsync();
       }
     } catch {
-      // Ignoramos: la tarea se crea igualmente, las geocercas funcionarán
-      // cuando la app tenga el permiso (se registran al arrancar).
+      // Ignoramos: la tarea se crea/actualiza igualmente
     }
 
-    const id = await crearTarea({
-      titulo: titulo.trim(),
-      descripcion: descripcion.trim(),
-      categoriaId: categoriaId!,
-      latitud: lugarSeleccionado.coordenadas.latitud,
-      longitud: lugarSeleccionado.coordenadas.longitud,
-      direccion: lugarSeleccionado.direccionCompleta,
-      nombreLugar: lugarSeleccionado.nombre,
-      osmId: lugarSeleccionado.osmId,
-      radioProximidad: radio,
-      geocercaActiva: true,
-      prioridad,
-    });
-
-    if (id) {
-      // Volvemos a la pestaña de inicio
-      enrutador.replace('/(tabs)');
+    if (modoEdicion && params.editarId) {
+      // ── Modo edición: actualizar tarea existente ──
+      await actualizarTarea(params.editarId, {
+        titulo: titulo.trim(),
+        descripcion: descripcion.trim(),
+        categoriaId: categoriaId!,
+        latitud: lugarSeleccionado.coordenadas.latitud,
+        longitud: lugarSeleccionado.coordenadas.longitud,
+        direccion: lugarSeleccionado.direccionCompleta,
+        nombreLugar: lugarSeleccionado.nombre,
+        osmId: lugarSeleccionado.osmId,
+        radioProximidad: radio,
+        prioridad,
+      });
+      // Volver a la pantalla de detalle de la tarea actualizada
+      enrutador.back();
     } else {
-      Alert.alert('Error', 'No se pudo guardar la tarea. Inténtalo de nuevo.');
+      // ── Modo creación: crear nueva tarea ──
+      const id = await crearTarea({
+        titulo: titulo.trim(),
+        descripcion: descripcion.trim(),
+        categoriaId: categoriaId!,
+        latitud: lugarSeleccionado.coordenadas.latitud,
+        longitud: lugarSeleccionado.coordenadas.longitud,
+        direccion: lugarSeleccionado.direccionCompleta,
+        nombreLugar: lugarSeleccionado.nombre,
+        osmId: lugarSeleccionado.osmId,
+        radioProximidad: radio,
+        geocercaActiva: true,
+        prioridad,
+      });
+
+      if (id) {
+        // Volvemos a la pestaña de inicio
+        enrutador.replace('/(tabs)');
+      } else {
+        Alert.alert('Error', 'No se pudo guardar la tarea. Inténtalo de nuevo.');
+      }
     }
   }
 
@@ -164,12 +240,14 @@ export default function PantallaNuevaTarea() {
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        {/* Cabecera */}
+        {/* Cabecera — el título cambia según el modo */}
         <View style={estilos.cabecera}>
           <TouchableOpacity onPress={() => enrutador.back()} style={estilos.botonVolver}>
             <Ionicons name="arrow-back" size={24} color={Colores.sobreSuperficie} />
           </TouchableOpacity>
-          <Text style={estilos.tituloCabecera}>Nueva tarea</Text>
+          <Text style={estilos.tituloCabecera}>
+            {modoEdicion ? 'Editar tarea' : 'Nueva tarea'}
+          </Text>
           <View style={{ width: 40 }} />
         </View>
 
@@ -205,6 +283,7 @@ export default function PantallaNuevaTarea() {
           <View style={[estilos.campo, { zIndex: 10 }]}>
             <Text style={estilos.etiquetaCampo}>Lugar *</Text>
             <BuscadorLugares
+              key={resetKey}
               marcador="Buscar tienda, banco, farmacia..."
               alSeleccionar={(resultado) => {
                 setLugarSeleccionado(resultado);
@@ -279,10 +358,10 @@ export default function PantallaNuevaTarea() {
             </View>
           </View>
 
-          {/* Botón guardar */}
+          {/* Botón guardar — el texto cambia según si es creación o edición */}
           <View style={estilos.seccionBoton}>
             <Boton
-              etiqueta="Guardar tarea"
+              etiqueta={modoEdicion ? 'Guardar cambios' : 'Guardar tarea'}
               alPresionar={manejarGuardar}
               cargando={cargando}
               variante="primario"

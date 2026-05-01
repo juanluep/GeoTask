@@ -27,6 +27,13 @@ import type { ResultadoBusquedaLugar } from '../models/ubicacion.modelo';
 // Identifica nuestra app para que puedan contactarnos si hay problemas
 const USER_AGENT = 'GeoTask/1.0 (com.chanlusoft.geotask)';
 
+// Coordenadas del centro geográfico de España peninsular.
+// Se usan como sesgo de búsqueda cuando el GPS no está disponible
+// (emulador, permiso denegado, GPS frío). Así Photon prioriza resultados
+// españoles en lugar de devolver resultados globales sin orden geográfico.
+const ESPANA_LAT = 40.4168;
+const ESPANA_LON = -3.7038;
+
 // ──────────────────────────────────────────────
 // 🔍 SECCIÓN: Búsqueda de lugares (Photon API)
 // Photon es más rápido que Nominatim para autocompletado
@@ -56,11 +63,12 @@ export async function buscarLugares(
   try {
     // Photon solo soporta lang: de, en, fr, it — "es" devuelve 400.
     // Sin lang, devuelve resultados en el idioma local del lugar (comportamiento correcto).
-    // lat/lon sesgan los resultados al entorno del usuario (si se proporcionan).
-    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(consulta)}&limit=${limite}`;
-    if (latitud !== undefined && longitud !== undefined) {
-      url += `&lat=${latitud}&lon=${longitud}`;
-    }
+    // lat/lon sesgan los resultados al entorno del usuario. Si no hay GPS,
+    // usamos el centro de España como fallback para que los resultados sean locales
+    // en lugar de devolver establecimientos de otros países.
+    const lat = latitud ?? ESPANA_LAT;
+    const lon = longitud ?? ESPANA_LON;
+    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(consulta)}&limit=${limite}&lat=${lat}&lon=${lon}`;
 
     const respuesta = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' },
@@ -80,11 +88,50 @@ export async function buscarLugares(
 }
 
 /**
+ * Extrae coordenadas [longitud, latitud] de cualquier geometría GeoJSON.
+ *
+ * Photon devuelve Points para la mayoría de resultados, pero algunos lugares
+ * mapeados como áreas en OSM (supermercados, centros comerciales...) pueden
+ * venir como Polygon o Way. En esos casos, tomamos el primer vértice del anillo
+ * exterior como coordenada representativa.
+ *
+ * Si dejamos que la desestructuración se aplique directamente sobre un array
+ * anidado `[[[lon, lat], ...], ...]`, las variables recibirían arrays en lugar
+ * de números, y SQLite lanzaría "Cannot convert [object Object] to a Kotlin type".
+ */
+function extraerCoordenadas(geometry: any): [number, number] {
+  if (!geometry || !geometry.coordinates) return [0, 0];
+
+  const tipo = geometry.type;
+  const coords = geometry.coordinates;
+
+  if (tipo === 'Point') {
+    // coords = [lon, lat]
+    return [Number(coords[0]), Number(coords[1])];
+  }
+  if (tipo === 'LineString') {
+    // coords = [[lon, lat], [lon, lat], ...]  → punto central de la línea
+    const medio = Math.floor(coords.length / 2);
+    return [Number(coords[medio][0]), Number(coords[medio][1])];
+  }
+  if (tipo === 'Polygon') {
+    // coords = [[[lon, lat], ...], ...]  → primer vértice del anillo exterior
+    return [Number(coords[0][0][0]), Number(coords[0][0][1])];
+  }
+  if (tipo === 'MultiPolygon') {
+    // coords = [[[[lon, lat], ...], ...], ...]  → primer vértice del primer polígono
+    return [Number(coords[0][0][0][0]), Number(coords[0][0][0][1])];
+  }
+  // Fallback para GeometryCollection u otros tipos no comunes
+  return [0, 0];
+}
+
+/**
  * Transforma un feature GeoJSON de Photon al modelo interno.
  */
 function transformarFeaturePhoton(feature: any): ResultadoBusquedaLugar {
   const props = feature.properties || {};
-  const [longitud, latitud] = feature.geometry?.coordinates || [0, 0];
+  const [longitud, latitud] = extraerCoordenadas(feature.geometry);
 
   // Construimos el nombre legible: "nombre, calle, ciudad"
   const partes: string[] = [];

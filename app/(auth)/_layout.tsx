@@ -21,6 +21,8 @@ export default function LayoutAuth() {
       <Stack.Screen name="splash" />
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="login" />
+      <Stack.Screen name="registro" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="recuperar" options={{ animation: 'slide_from_right' }} />
     </Stack>
   );
 }

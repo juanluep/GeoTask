@@ -181,12 +181,18 @@ async function ejecutarMigraciones(bd: SQLite.SQLiteDatabase): Promise<void> {
   } catch {
     // La columna ya existe → OK
   }
-  // Migración v1.2: columnas de fase 5 (listas compartidas)
+  // Migración v1.2: columnas de fase 5 (listas compartidas y sync)
   try {
     await bd.execAsync(`ALTER TABLE tareas ADD COLUMN lista_id TEXT;`);
   } catch { /* ya existe */ }
   try {
     await bd.execAsync(`ALTER TABLE tareas ADD COLUMN creado_por TEXT;`);
+  } catch { /* ya existe */ }
+  // Migración v1.3: columna para rastrear qué tareas aún no se han subido a Supabase.
+  // 0 = pendiente de sync, 1 = ya sincronizada con la nube.
+  // DEFAULT 0 → todas las tareas existentes quedarán pendientes de primera sync.
+  try {
+    await bd.execAsync(`ALTER TABLE tareas ADD COLUMN sincronizado INTEGER DEFAULT 0;`);
   } catch { /* ya existe */ }
 }
 
@@ -263,9 +269,51 @@ export async function obtenerTareaPorId(id: string): Promise<Tarea | null> {
  * Crea una nueva tarea en la base de datos.
  * El ID se genera fuera de esta función (en el store) usando react-native-uuid.
  */
+/**
+ * Convierte cualquier valor a un tipo que SQLite (Kotlin) pueda manejar.
+ * expo-sqlite con New Architecture lanza "Cannot convert [object Object] to a
+ * Kotlin type" si recibe un objeto JS (ej: coordenadas anidadas de Photon/Polygon,
+ * arrays sin serializar, o undefined sin coalescing). Esta función garantiza que
+ * todo lo que llega a runAsync es string, number o null.
+ */
+function aSqlParam(valor: unknown): string | number | null {
+  if (valor === null || valor === undefined) return null;
+  if (typeof valor === 'string') return valor;
+  if (typeof valor === 'number') return Number.isFinite(valor) ? valor : null;
+  if (typeof valor === 'boolean') return valor ? 1 : 0;
+  // Arrays y objetos no deberían llegar aquí, pero los serializamos por seguridad
+  try {
+    const serializado = JSON.stringify(valor);
+    console.warn('[basedatos] Valor no primitivo en params SQLite:', typeof valor, serializado);
+    return serializado;
+  } catch {
+    console.warn('[basedatos] Valor no serializable en params SQLite:', typeof valor);
+    return null;
+  }
+}
+
 export async function crearTarea(id: string, datos: CrearTareaDTO): Promise<void> {
   const bd = await obtenerBD();
   const ahora = new Date().toISOString();
+
+  const params = [
+    aSqlParam(id),
+    aSqlParam(datos.titulo),
+    aSqlParam(datos.descripcion),
+    aSqlParam(datos.categoriaId),
+    aSqlParam(datos.latitud),
+    aSqlParam(datos.longitud),
+    aSqlParam(datos.direccion),
+    aSqlParam(datos.nombreLugar),
+    aSqlParam(datos.osmId),
+    aSqlParam(datos.radioProximidad),
+    datos.geocercaActiva ? 1 : 0,
+    aSqlParam(datos.prioridad),
+    aSqlParam(ahora),
+    aSqlParam(datos.fechaLimite),
+    aSqlParam(datos.fotos != null ? JSON.stringify(datos.fotos) : '[]'),
+    aSqlParam(datos.plantillaId),
+  ];
 
   await bd.runAsync(
     `INSERT INTO tareas (
@@ -275,24 +323,7 @@ export async function crearTarea(id: string, datos: CrearTareaDTO): Promise<void
       completada, prioridad,
       fecha_creacion, fecha_limite, fotos, plantilla_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      datos.titulo,
-      datos.descripcion,
-      datos.categoriaId,
-      datos.latitud,
-      datos.longitud,
-      datos.direccion,
-      datos.nombreLugar ?? null,
-      datos.osmId ?? null,
-      datos.radioProximidad,
-      datos.geocercaActiva ? 1 : 0,
-      datos.prioridad,
-      ahora,
-      datos.fechaLimite ?? null,
-      JSON.stringify(datos.fotos ?? []),
-      datos.plantillaId ?? null,
-    ]
+    params
   );
 }
 
@@ -344,9 +375,13 @@ export async function actualizarTarea(
     }
   }
 
-  if (columnas.length === 0) return; // Nada que actualizar
+  if (columnas.length === 0) return;
 
-  valores.push(id); // Para el WHERE id = ?
+  // Siempre que editamos localmente, marcamos como no sincronizado
+  // para que sincronizarPendientes() lo suba en la próxima oportunidad.
+  columnas.push('sincronizado = 0');
+
+  valores.push(id);
   await bd.runAsync(
     `UPDATE tareas SET ${columnas.join(', ')} WHERE id = ?`,
     valores
@@ -451,6 +486,65 @@ function filaACategoria(fila: Record<string, unknown>): Categoria {
     color: fila.color as string,
     esPredeterminada: (fila.es_predeterminada as number) === 1,
   };
+}
+
+// ──────────────────────────────────────────────
+// ☁️ SECCIÓN: Funciones de Sincronización (Fase 5)
+// Usadas por sincronizacion.servicio.ts para la estrategia offline-first.
+// ──────────────────────────────────────────────
+
+/**
+ * Devuelve todas las tareas que aún no se han subido a Supabase.
+ * La columna `sincronizado = 0` marca cualquier creación o edición local
+ * que todavía no ha llegado a la nube.
+ */
+export async function obtenerTareasSinSincronizar(): Promise<Tarea[]> {
+  const bd = await obtenerBD();
+  const filas = await bd.getAllAsync<Record<string, unknown>>(
+    `SELECT * FROM tareas WHERE sincronizado = 0`
+  );
+  return filas.map(filaATarea);
+}
+
+/**
+ * Marca una tarea como sincronizada con Supabase.
+ * Se llama después de que el upsert remoto haya tenido éxito.
+ */
+export async function marcarTareaSincronizada(id: string): Promise<void> {
+  const bd = await obtenerBD();
+  await bd.runAsync(`UPDATE tareas SET sincronizado = 1 WHERE id = ?`, [id]);
+}
+
+/**
+ * Inserta o reemplaza una tarea completa en SQLite.
+ * Se usa para recibir datos REMOTOS de Supabase:
+ * - Si la tarea no existe localmente → la crea
+ * - Si ya existe → la sobreescribe (last-write-wins con updated_at)
+ * La marca como sincronizada (1) porque viene de la nube.
+ */
+export async function upsertTarea(tarea: Tarea): Promise<void> {
+  const bd = await obtenerBD();
+  await bd.runAsync(
+    `INSERT OR REPLACE INTO tareas (
+      id, titulo, descripcion, categoria_id,
+      latitud, longitud, direccion, nombre_lugar, osm_id,
+      radio_proximidad, geocerca_activa, completada, prioridad,
+      fecha_creacion, fecha_completada, fecha_limite, fotos,
+      plantilla_id, lista_id, creado_por, sincronizado
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    [
+      tarea.id, tarea.titulo, tarea.descripcion, tarea.categoriaId,
+      tarea.latitud, tarea.longitud, tarea.direccion,
+      tarea.nombreLugar ?? null, tarea.osmId ?? null,
+      tarea.radioProximidad, tarea.geocercaActiva ? 1 : 0,
+      tarea.completada ? 1 : 0, tarea.prioridad,
+      tarea.fechaCreacion, tarea.fechaCompletada ?? null,
+      tarea.fechaLimite ?? null,
+      JSON.stringify(tarea.fotos ?? []),
+      tarea.plantillaId ?? null, tarea.listaId ?? null,
+      tarea.creadoPor ?? null,
+    ]
+  );
 }
 
 // ──────────────────────────────────────────────

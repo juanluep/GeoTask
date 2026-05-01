@@ -25,18 +25,18 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Share,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import MapView, { UrlTile, Marker, Circle } from 'react-native-maps';
+import { MiniMapaLeaflet } from '../../src/components/mapa/MapaLeaflet';
 import { useTareaStore, useTareaPorId } from '../../src/stores/useTareaStore';
 import { useCategoriaStore } from '../../src/stores/useCategoriaStore';
 import { Boton } from '../../src/components/ui/Boton';
 import { Indicador } from '../../src/components/ui/Indicador';
 import { Colores, Espaciado, Radios, Sombras } from '../../src/config/tema';
 
-const TILE_URL = 'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
 
 export default function PantallaDetalleTarea() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -95,6 +95,33 @@ export default function PantallaDetalleTarea() {
     );
   }
 
+  // ── Compartir tarea ──────────────────────────
+  async function compartirTarea() {
+    // Share.share() abre la hoja de compartir nativa del sistema operativo.
+    // En Android muestra un intent chooser; en iOS el share sheet de Apple.
+    const lugar = tarea.nombreLugar || tarea.direccion;
+    const prioridadTexto = { alta: '🔴 Alta', media: '🟡 Media', baja: '🟢 Baja' }[tarea.prioridad];
+    await Share.share({
+      title: tarea.titulo,
+      message:
+        `📋 ${tarea.titulo}\n` +
+        `📍 ${lugar}\n` +
+        `${tarea.descripcion ? `📝 ${tarea.descripcion}\n` : ''}` +
+        `${prioridadTexto} · Radio: ${tarea.radioProximidad >= 1000 ? `${tarea.radioProximidad / 1000} km` : `${tarea.radioProximidad} m`}\n\n` +
+        `Compartido desde GeoTask`,
+    }).catch(() => {});
+  }
+
+  // ── Navegar a editar ─────────────────────────
+  function navegarAEditar() {
+    // Navegamos a la pantalla "Nueva tarea" en modo edición pasando el ID.
+    // Esa pantalla detecta el parámetro editarId y pre-rellena el formulario.
+    enrutador.push({
+      pathname: '/(tabs)/nueva',
+      params: { editarId: tarea.id },
+    } as any);
+  }
+
   // ── Confirmar eliminar ───────────────────────
   function confirmarEliminar() {
     Alert.alert(
@@ -131,10 +158,20 @@ export default function PantallaDetalleTarea() {
           <Ionicons name="arrow-back" size={24} color={Colores.sobreSuperficie} />
         </TouchableOpacity>
         <Text style={estilos.tituloCabecera}>Detalle</Text>
-        {/* Botón eliminar en cabecera */}
-        <TouchableOpacity onPress={confirmarEliminar} style={estilos.botonEliminar}>
-          <Ionicons name="trash-outline" size={22} color={Colores.error} />
-        </TouchableOpacity>
+        {/* Botones de acción: compartir + editar + eliminar */}
+        <View style={estilos.accionesCabecera}>
+          <TouchableOpacity onPress={compartirTarea} style={estilos.botonAccion}>
+            <Ionicons name="share-outline" size={22} color={Colores.sobreSuperficie} />
+          </TouchableOpacity>
+          {!tarea.completada && (
+            <TouchableOpacity onPress={navegarAEditar} style={estilos.botonAccion}>
+              <Ionicons name="create-outline" size={22} color={Colores.primario} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={confirmarEliminar} style={estilos.botonAccion}>
+            <Ionicons name="trash-outline" size={22} color={Colores.error} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -161,42 +198,16 @@ export default function PantallaDetalleTarea() {
           ) : null}
         </View>
 
-        {/* ── Mapa con la ubicación de la tarea ── */}
+        {/* ── Mini mapa con la ubicación de la tarea (Leaflet, sin Google) ── */}
         {tarea.latitud !== 0 && tarea.longitud !== 0 ? (
-          <MapView
-            style={estilos.mapaDetalle}
-            initialRegion={{
-              latitude: tarea.latitud,
-              longitude: tarea.longitud,
-              latitudeDelta: 0.003,
-              longitudeDelta: 0.003,
-            }}
-            mapType="none"
-            scrollEnabled={false}
-            zoomEnabled={false}
-            rotateEnabled={false}
-            pitchEnabled={false}
-          >
-            <UrlTile urlTemplate={TILE_URL} maximumZ={19} flipY={false} zIndex={0} tileSize={256} />
-            {tarea.geocercaActiva && (
-              <Circle
-                center={{ latitude: tarea.latitud, longitude: tarea.longitud }}
-                radius={tarea.radioProximidad}
-                fillColor={(categoria?.color ?? Colores.primario) + '20'}
-                strokeColor={(categoria?.color ?? Colores.primario) + '60'}
-                strokeWidth={1.5}
-              />
-            )}
-            <Marker coordinate={{ latitude: tarea.latitud, longitude: tarea.longitud }}>
-              <View style={[estilos.pinDetalle, { backgroundColor: categoria?.color ?? Colores.primario }]}>
-                {categoria ? (
-                  <MaterialCommunityIcons name={categoria.icono as any} size={14} color={Colores.blanco} />
-                ) : (
-                  <Ionicons name="location" size={14} color={Colores.blanco} />
-                )}
-              </View>
-            </Marker>
-          </MapView>
+          <MiniMapaLeaflet
+            latitud={tarea.latitud}
+            longitud={tarea.longitud}
+            color={categoria?.color ?? Colores.primario}
+            radio={tarea.radioProximidad}
+            geocercaActiva={tarea.geocercaActiva}
+            estilo={estilos.mapaDetalle}
+          />
         ) : (
           <View style={estilos.mapaPlaceholder}>
             <Ionicons name="location-outline" size={32} color={Colores.sobreSuperficieVariante} />
@@ -333,7 +344,8 @@ const estilos = StyleSheet.create({
   },
   botonVolver: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   tituloCabecera: { fontFamily: 'Inter_700Bold', fontSize: 18, color: Colores.sobreSuperficie },
-  botonEliminar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  accionesCabecera: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  botonAccion: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   scroll: { padding: Espaciado.base, gap: Espaciado.base, paddingBottom: Espaciado.xxxl },
   seccionTitulo: { gap: Espaciado.sm },
   badgeCategoria: {
@@ -352,16 +364,6 @@ const estilos = StyleSheet.create({
     height: 160,
     borderRadius: Radios.tarjeta,
     overflow: 'hidden',
-  },
-  pinDetalle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: Colores.blanco,
-    elevation: 3,
   },
   mapaPlaceholder: {
     height: 160,

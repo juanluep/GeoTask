@@ -28,10 +28,14 @@ import {
   completarTarea as completarTareaEnBD,
   eliminarTarea as eliminarTareaEnBD,
 } from '../services/basedatos.servicio';
-// Fase 3: re-registramos geocercas cada vez que cambia la lista de tareas activas
 import { registrarTodasLasGeocercas } from '../services/geocerca.servicio';
-// Fase 4: auto-regeneración de tareas recurrentes al completar
 import { usePlantillaStore } from './usePlantillaStore';
+// Fase 5: sincronización offline-first con Supabase
+import {
+  subirTarea,
+  eliminarTareaRemota,
+} from '../services/sincronizacion.servicio';
+import { useAuthStore } from './useAuthStore';
 import type { Tarea, CrearTareaDTO, ActualizarTareaDTO } from '../models/tarea.modelo';
 
 // ──────────────────────────────────────────────
@@ -168,8 +172,16 @@ export const useTareaStore = create<EstadoTareas>((set, get) => ({
         cargando: false,
       }));
 
-      // Fase 3: re-registrar geocercas para incluir la nueva tarea
       registrarTodasLasGeocercas().catch(() => {});
+
+      // Fase 5: intentar subir a Supabase en segundo plano.
+      // Si no hay conexión o sesión, la tarea queda con sincronizado=0
+      // y se subirá en la próxima sincronización al arrancar.
+      const userId = useAuthStore.getState().userId;
+      if (userId) {
+        subirTarea(nuevaTarea, userId).catch(() => {});
+      }
+
       return nuevoId;
     } catch (error) {
       console.error('[useTareaStore] Error al crear tarea:', error);
@@ -184,12 +196,19 @@ export const useTareaStore = create<EstadoTareas>((set, get) => ({
       await actualizarTareaEnBD(id, cambios);
 
       // Actualizamos solo la tarea afectada en el array (inmutable con map)
+      const tareaActualizada = get().tareas.find((t) => t.id === id);
       set((estado) => ({
         tareas: estado.tareas.map((t) =>
           t.id === id ? { ...t, ...cambios } : t
         ),
         cargando: false,
       }));
+
+      // Fase 5: sync en segundo plano
+      const userId = useAuthStore.getState().userId;
+      if (userId && tareaActualizada) {
+        subirTarea({ ...tareaActualizada, ...cambios }, userId).catch(() => {});
+      }
     } catch (error) {
       set({ error: 'Error al actualizar la tarea.', cargando: false });
     }
@@ -210,8 +229,13 @@ export const useTareaStore = create<EstadoTareas>((set, get) => ({
           tareas: estado.tareas.filter((t) => t.id !== id),
           tareasCompletadas: [tareaActualizada, ...estado.tareasCompletadas],
         }));
-        // Fase 3: quitar la geocerca de la tarea completada
         registrarTodasLasGeocercas().catch(() => {});
+
+        // Fase 5: sincronizar el estado "completada" con Supabase
+        const userId = useAuthStore.getState().userId;
+        if (userId) {
+          subirTarea(tareaActualizada, userId).catch(() => {});
+        }
 
         // Fase 4: si la tarea pertenece a una plantilla recurrente,
         // generar automáticamente la siguiente instancia
@@ -240,8 +264,13 @@ export const useTareaStore = create<EstadoTareas>((set, get) => ({
         tareas: estado.tareas.filter((t) => t.id !== id),
         tareasCompletadas: estado.tareasCompletadas.filter((t) => t.id !== id),
       }));
-      // Fase 3: quitar la geocerca de la tarea eliminada
       registrarTodasLasGeocercas().catch(() => {});
+
+      // Fase 5: eliminar también en Supabase
+      const userId = useAuthStore.getState().userId;
+      if (userId) {
+        eliminarTareaRemota(id).catch(() => {});
+      }
     } catch (error) {
       set({ error: 'Error al eliminar la tarea.' });
     }

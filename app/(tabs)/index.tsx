@@ -20,12 +20,14 @@ import {
   FlatList,
   RefreshControl,
   Alert,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTareaStore, useTareasFiltradas } from '../../src/stores/useTareaStore';
 import { useCategoriaStore } from '../../src/stores/useCategoriaStore';
+import { useListaStore } from '../../src/stores/useListaStore';
 import { Indicador } from '../../src/components/ui/Indicador';
 import { Colores, Espaciado, Radios, Sombras } from '../../src/config/tema';
 import type { Tarea } from '../../src/models/tarea.modelo';
@@ -36,16 +38,32 @@ export default function PantallaInicio() {
   const { cargarTareas, completarTarea, cargando, filtroCategoria, cambiarFiltroCategoria } = useTareaStore();
   const tareasFiltradas = useTareasFiltradas();
   const { categorias, cargarCategorias } = useCategoriaStore();
+  const { listas, tareasLista, listaActivaId, activarLista, cargarListas, cargarTareasLista } = useListaStore();
 
   // Cargamos datos al montar la pantalla
   useEffect(() => {
     cargarTareas();
     cargarCategorias();
+    cargarListas();
   }, []);
 
+  // Cuando se activa una lista, cargar sus tareas
+  useEffect(() => {
+    if (listaActivaId) {
+      cargarTareasLista(listaActivaId);
+    }
+  }, [listaActivaId]);
+
+  // Las tareas a mostrar dependen de si hay lista activa
+  const tareasActuales = listaActivaId ? tareasLista : tareasFiltradas;
+
   const recargar = useCallback(() => {
-    cargarTareas();
-  }, []);
+    if (listaActivaId) {
+      cargarTareasLista(listaActivaId);
+    } else {
+      cargarTareas();
+    }
+  }, [listaActivaId]);
 
   function manejarCompletar(tarea: Tarea) {
     Alert.alert(
@@ -67,7 +85,18 @@ export default function PantallaInicio() {
           <Text style={estilos.nombreApp}>GeoTask</Text>
         </View>
         <View style={estilos.iconosCabecera}>
-          <TouchableOpacity style={estilos.botonIcono}>
+          {/* La campanilla abrirá el centro de notificaciones en una versión futura.
+              Por ahora muestra una breve explicación al usuario. */}
+          <TouchableOpacity
+            style={estilos.botonIcono}
+            onPress={() =>
+              Alert.alert(
+                'Centro de notificaciones',
+                'Aquí verás el historial de alertas de proximidad cuando estés cerca de un lugar con tareas pendientes.\n\nEsta función estará disponible en la Fase 3.',
+                [{ text: 'Entendido' }]
+              )
+            }
+          >
             <Ionicons name="notifications-outline" size={22} color={Colores.sobreSuperficie} />
           </TouchableOpacity>
         </View>
@@ -77,9 +106,11 @@ export default function PantallaInicio() {
       <View style={estilos.bannerResumen}>
         <View>
           <Text style={estilos.numeroBanner}>
-            {tareasFiltradas.length} {tareasFiltradas.length === 1 ? 'tarea' : 'tareas'}
+            {tareasActuales.length} {tareasActuales.length === 1 ? 'tarea' : 'tareas'}
           </Text>
-          <Text style={estilos.subtextoBanner}>pendientes</Text>
+          <Text style={estilos.subtextoBanner}>
+            {listaActivaId ? listas.find((l) => l.id === listaActivaId)?.nombre ?? 'lista' : 'pendientes'}
+          </Text>
         </View>
         <TouchableOpacity
           onPress={() => enrutador.push('/(tabs)/nueva')}
@@ -90,48 +121,95 @@ export default function PantallaInicio() {
         </TouchableOpacity>
       </View>
 
-      {/* Chips de filtro por categoría */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={estilos.contenedorChipsFiltro}
-        style={{ maxHeight: 52, marginTop: Espaciado.sm }}
-      >
-        {/* Chip "Todas" */}
-        <TouchableOpacity
-          style={[estilos.chipFiltro, !filtroCategoria && estilos.chipFiltroActivo]}
-          onPress={() => cambiarFiltroCategoria(null)}
+      {/* Chips de filtro por categoría (solo cuando no hay lista activa) */}
+      {!listaActivaId && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={estilos.contenedorChipsFiltro}
+          style={{ maxHeight: 52, marginTop: Espaciado.sm }}
         >
-          <Text style={[estilos.textoChipFiltro, !filtroCategoria && estilos.textoChipFiltroActivo]}>
-            Todas
-          </Text>
-        </TouchableOpacity>
+          {/* Chip "Todas" */}
+          <TouchableOpacity
+            style={[estilos.chipFiltro, !filtroCategoria && estilos.chipFiltroActivo]}
+            onPress={() => cambiarFiltroCategoria(null)}
+          >
+            <Text style={[estilos.textoChipFiltro, !filtroCategoria && estilos.textoChipFiltroActivo]}>
+              Todas
+            </Text>
+          </TouchableOpacity>
 
-        {/* Chips de categorías */}
-        {categorias.map((cat) => {
-          const activa = filtroCategoria === cat.id;
-          return (
-            <TouchableOpacity
-              key={cat.id}
-              style={[estilos.chipFiltro, activa && { backgroundColor: cat.color, borderColor: cat.color }]}
-              onPress={() => cambiarFiltroCategoria(activa ? null : cat.id)}
-            >
-              <Text style={[estilos.textoChipFiltro, activa && { color: Colores.blanco }]}>
-                {cat.nombre}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+          {/* Chips de categorías */}
+          {categorias.map((cat) => {
+            const activa = filtroCategoria === cat.id;
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                style={[estilos.chipFiltro, activa && { backgroundColor: cat.color, borderColor: cat.color }]}
+                onPress={() => cambiarFiltroCategoria(activa ? null : cat.id)}
+              >
+                <Text style={[estilos.textoChipFiltro, activa && { color: Colores.blanco }]}>
+                  {cat.nombre}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
+      {/* Chips de filtro por lista compartida */}
+      {listas.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={estilos.contenedorChipsFiltro}
+          style={{ maxHeight: 52, marginTop: Espaciado.xs }}
+        >
+          {/* Chip "Mis tareas" */}
+          <TouchableOpacity
+            style={[estilos.chipLista, !listaActivaId && estilos.chipListaActivo]}
+            onPress={() => activarLista(null)}
+          >
+            <Ionicons
+              name="person-outline"
+              size={12}
+              color={!listaActivaId ? Colores.blanco : Colores.sobreSuperficieVariante}
+            />
+            <Text style={[estilos.textoChipLista, !listaActivaId && estilos.textoChipListaActivo]}>
+              Mis tareas
+            </Text>
+          </TouchableOpacity>
+
+          {listas.map((lista) => {
+            const activa = listaActivaId === lista.id;
+            return (
+              <TouchableOpacity
+                key={lista.id}
+                style={[estilos.chipLista, activa && estilos.chipListaActivo]}
+                onPress={() => activarLista(activa ? null : lista.id)}
+              >
+                <Ionicons
+                  name="people-outline"
+                  size={12}
+                  color={activa ? Colores.blanco : Colores.sobreSuperficieVariante}
+                />
+                <Text style={[estilos.textoChipLista, activa && estilos.textoChipListaActivo]}>
+                  {lista.nombre}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {/* Lista de tareas */}
-      {cargando && tareasFiltradas.length === 0 ? (
+      {cargando && tareasActuales.length === 0 ? (
         <Indicador mensaje="Cargando tareas..." />
-      ) : tareasFiltradas.length === 0 ? (
+      ) : tareasActuales.length === 0 ? (
         <EstadoVacio onCrear={() => enrutador.push('/(tabs)/nueva')} />
       ) : (
         <FlatList
-          data={tareasFiltradas}
+          data={tareasActuales}
           keyExtractor={(item) => item.id}
           contentContainerStyle={estilos.listaContenido}
           showsVerticalScrollIndicator={false}
@@ -292,6 +370,21 @@ const estilos = StyleSheet.create({
   chipFiltroActivo: { backgroundColor: Colores.primario, borderColor: Colores.primario },
   textoChipFiltro: { fontFamily: 'Inter_500Medium', fontSize: 13, color: Colores.sobreSuperficieVariante },
   textoChipFiltroActivo: { color: Colores.blanco },
+  // Chips de listas compartidas
+  chipLista: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Espaciado.base,
+    paddingVertical: Espaciado.sm,
+    borderRadius: Radios.completo,
+    backgroundColor: Colores.blanco,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+  },
+  chipListaActivo: { backgroundColor: '#1d4ed8', borderColor: '#1d4ed8' },
+  textoChipLista: { fontFamily: 'Inter_500Medium', fontSize: 12, color: Colores.sobreSuperficieVariante },
+  textoChipListaActivo: { color: Colores.blanco },
   // Lista
   listaContenido: { padding: Espaciado.base, gap: Espaciado.md, paddingBottom: Espaciado.xxxl },
   // Tarjeta tarea

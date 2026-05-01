@@ -61,6 +61,11 @@ export function BuscadorLugares({
   // useRef persiste entre renders sin causar re-renders (a diferencia de useState).
   const temporizadorDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Flag para detectar cuándo el cambio de texto viene de una selección del usuario
+  // (no de teclear manualmente). Si es `true`, saltamos la búsqueda del debounce
+  // para evitar que el dropdown reaparezca justo después de seleccionar un resultado.
+  const textoEsSeleccion = useRef(false);
+
   // Cuando valorInicial cambia desde fuera (ej: mapa→nueva rellena la ubicación
   // después del montaje via useEffect), actualizamos el texto interno si está vacío.
   useEffect(() => {
@@ -85,6 +90,12 @@ export function BuscadorLugares({
     // Creamos un nuevo temporizador: la búsqueda se lanza solo si el usuario
     // deja de escribir durante 400ms (debounce)
     temporizadorDebounce.current = setTimeout(async () => {
+      // Si el cambio de texto vino de una selección (manejarSeleccion),
+      // no lanzamos otra búsqueda: eso reabrirÍa el dropdown innecesariamente.
+      if (textoEsSeleccion.current) {
+        textoEsSeleccion.current = false;
+        return;
+      }
       setCargando(true);
       setBusquedaRealizada(false);
       const lugares = await buscarLugares(texto, 5, latitud, longitud);
@@ -103,8 +114,9 @@ export function BuscadorLugares({
   }, [texto]);
 
   function manejarSeleccion(resultado: ResultadoBusquedaLugar) {
-    // Al seleccionar un resultado, rellenamos el input con la dirección
-    // y cerramos el dropdown
+    // Marcamos que el próximo cambio de `texto` es programático (no del usuario).
+    // Esto evita que el debounce lance una nueva búsqueda y reabre el dropdown.
+    textoEsSeleccion.current = true;
     setTexto(resultado.nombre);
     setResultados([]);
     setMostrarResultados(false);

@@ -4,24 +4,20 @@
  * ============================================================
  *
  * Vista del mapa interactivo con:
- * - Tiles de OpenStreetMap (gratuito, sin API key) via UrlTile
+ * - Mapa OSM via Leaflet.js (WebView, sin Google Maps)
  * - Ubicación del usuario en tiempo real
  * - Marcadores de tareas por color de categoría
- * - Círculos semi-transparentes para visualizar el radio de geocerca
- * - Callout al tocar un marcador con botón "Ver detalle"
+ * - Círculos para visualizar el radio de geocerca
+ * - Popup al tocar un marcador con botón "Ver detalle"
  * - Barra de búsqueda superior
  * - Bottom sheet con tareas de la zona visible
  * - Botón para recentrar en la ubicación actual
  *
- * Tiles OSM: https://tile.openstreetmap.org/{z}/{x}/{y}.png
- * Licencia: © OpenStreetMap contributors (ODbL)
- * Uso responsable: max ~1 req/tile, no borrar caché agresivamente
- *
- * @version 3.0.0 (Fase 3 — mapa real)
+ * @version 4.0.0 (sin Google Maps — Leaflet puro)
  * ============================================================
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -31,36 +27,21 @@ import {
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
-import MapView, { UrlTile, Region } from 'react-native-maps';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTareaStore } from '../../src/stores/useTareaStore';
 import { useCategoriaStore } from '../../src/stores/useCategoriaStore';
 import { useUbicacion } from '../../src/hooks/useUbicacion';
-import { MarcadorTarea } from '../../src/components/mapa/MarcadorTarea';
+import { MapaLeaflet, type LimitesMapaProps } from '../../src/components/mapa/MapaLeaflet';
 import { Colores, Espaciado, Radios, Sombras } from '../../src/config/tema';
 import { geocodingInverso } from '../../src/services/lugares.servicio';
 import type { Tarea } from '../../src/models/tarea.modelo';
 
 const { height: ALTO_PANTALLA } = Dimensions.get('window');
 
-// CartoDB Voyager: estilo similar a OSM pero sin la política de bloqueo por User-Agent.
-// OSM bloquea UrlTile porque no puede enviar cabecera User-Agent personalizada.
-// CartoDB permite uso libre en apps de desarrollo/producción.
-const OSM_TILE_URL = 'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-
-/** Región inicial centrada en España (se actualizará con la ubicación real) */
-const REGION_INICIAL: Region = {
-  latitude: 40.4168,
-  longitude: -3.7038,
-  latitudeDelta: 0.05,
-  longitudeDelta: 0.05,
-};
-
 export default function PantallaMapa() {
   const enrutador = useRouter();
-  const refMapa = useRef<MapView>(null);
 
   // ── Datos ──────────────────────────────────
   const { tareas, cargarTareas } = useTareaStore();
@@ -68,133 +49,82 @@ export default function PantallaMapa() {
   const ubicacion = useUbicacion();
 
   // ── Estado local ───────────────────────────
-  const [regionVisible, setRegionVisible] = useState<Region>(REGION_INICIAL);
+  const [limitesMapa, setLimitesMapa] = useState<LimitesMapaProps | null>(null);
   const [tareasMapa, setTareasMapa] = useState<Tarea[]>([]);
   const [geocodificando, setGeocodificando] = useState(false);
+  // Incrementar este contador dispara "centrar en usuario" en el mapa
+  const [comandoCentrar, setComandoCentrar] = useState(0);
 
   useEffect(() => {
     cargarTareas();
     cargarCategorias();
   }, []);
 
-  // Actualizar lista de tareas en el mapa cuando cambian las tareas
+  // Solo mostrar tareas con coordenadas válidas
   useEffect(() => {
-    // Solo mostrar tareas que tienen coordenadas válidas
-    const conCoordenadas = tareas.filter(
-      (t) => t.latitud !== 0 && t.longitud !== 0
-    );
-    setTareasMapa(conCoordenadas);
+    setTareasMapa(tareas.filter((t) => t.latitud !== 0 && t.longitud !== 0));
   }, [tareas]);
 
-  // Cuando obtenemos la ubicación del usuario, centramos el mapa en ella
-  useEffect(() => {
-    if (ubicacion.coordenadas && refMapa.current) {
-      refMapa.current.animateToRegion(
-        {
-          latitude: ubicacion.coordenadas.latitud,
-          longitude: ubicacion.coordenadas.longitud,
-          latitudeDelta: 0.02,
-          longitudeDelta: 0.02,
-        },
-        800 // duración de la animación en ms
-      );
-    }
-  }, [ubicacion.coordenadas]);
-
-  /** Recentra el mapa en la ubicación actual del usuario */
-  function centrarEnUsuario() {
-    if (!ubicacion.coordenadas) return;
-    refMapa.current?.animateToRegion(
-      {
-        latitude: ubicacion.coordenadas.latitud,
-        longitude: ubicacion.coordenadas.longitud,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      },
-      600
+  /** Calcula tareas dentro de los límites visibles del mapa.
+   *  Si los bounds aún no están disponibles (el WebView no ha disparado
+   *  'boundsChange' todavía), devuelve todas las tareas. */
+  function calcularTareasEnZona(): Tarea[] {
+    if (!limitesMapa) return tareasMapa;
+    return tareasMapa.filter(
+      (t) =>
+        t.latitud <= limitesMapa.norte &&
+        t.latitud >= limitesMapa.sur &&
+        t.longitud >= limitesMapa.oeste &&
+        t.longitud <= limitesMapa.este
     );
   }
 
-  /** Calcula las tareas visibles en la región actual del mapa */
-  function calcularTareasEnZona(region: Region): Tarea[] {
-    return tareasMapa.filter((t) => {
-      const dentroLat =
-        Math.abs(t.latitud - region.latitude) < region.latitudeDelta;
-      const dentroLon =
-        Math.abs(t.longitud - region.longitude) < region.longitudeDelta;
-      return dentroLat && dentroLon;
-    });
+  /** Recentrar el mapa en la ubicación actual del usuario */
+  function centrarEnUsuario() {
+    if (!ubicacion.disponible) return;
+    setComandoCentrar((n) => n + 1);
   }
 
   /**
-   * Al mantener pulsado el mapa, hace geocoding inverso de las coordenadas
-   * y abre el formulario de nueva tarea con la ubicación pre-rellenada.
+   * Long press en el mapa: geocoding inverso de las coordenadas
+   * y navegar al formulario de nueva tarea con la ubicación pre-rellenada.
    */
-  async function manejarLongPress(evento: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) {
+  async function manejarLongPress(lat: number, lon: number) {
     if (geocodificando) return;
     setGeocodificando(true);
-    const { latitude, longitude } = evento.nativeEvent.coordinate;
-    const resultado = await geocodingInverso(latitude, longitude);
+    const resultado = await geocodingInverso(lat, lon);
     setGeocodificando(false);
     enrutador.push({
       pathname: '/(tabs)/nueva',
       params: {
-        lat: String(latitude),
-        lon: String(longitude),
+        lat: String(lat),
+        lon: String(lon),
         nombre: resultado?.nombre ?? 'Ubicación seleccionada',
-        direccion: resultado?.direccionCompleta ?? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+        direccion: resultado?.direccionCompleta ?? `${lat.toFixed(5)}, ${lon.toFixed(5)}`,
         osmId: resultado?.osmId ?? '',
       },
     });
   }
 
-  const tareasEnZona = calcularTareasEnZona(regionVisible);
+  const tareasEnZona = calcularTareasEnZona();
+
+  // Radio visible aproximado en km (calculado desde los límites norte-sur)
+  const radioVisibleKm = limitesMapa
+    ? Math.round(((limitesMapa.norte - limitesMapa.sur) / 2) * 111)
+    : null;
 
   return (
     <View style={estilos.contenedor}>
-      {/* ── MapView principal ── */}
-      <MapView
-        ref={refMapa}
-        style={StyleSheet.absoluteFillObject}
-        initialRegion={REGION_INICIAL}
-        // showsUserLocation: muestra el punto azul de ubicación del usuario
-        // usando la localización del sistema (más eficiente que un marcador propio)
-        showsUserLocation={ubicacion.disponible}
-        showsMyLocationButton={false} // Usamos nuestro propio botón de recentrar
-        // onRegionChangeComplete: se llama cuando el usuario para de mover el mapa
-        // Calculamos las tareas en zona aquí (no en onRegionChange para mejor rendimiento)
-        onRegionChangeComplete={(region) => setRegionVisible(region)}
+      {/* ── Mapa Leaflet (ocupa toda la pantalla) ── */}
+      <MapaLeaflet
+        tareas={tareasMapa}
+        categorias={categorias}
+        ubicacion={ubicacion.coordenadas}
+        comandoCentrar={comandoCentrar}
         onLongPress={manejarLongPress}
-        mapType="none" // "none" = sin mapa base (cargamos nuestros tiles OSM)
-        // rotateEnabled: false simplifica la orientación del mapa para el usuario
-        rotateEnabled={false}
-      >
-        {/*
-          UrlTile carga los tiles de imagen del mapa desde OpenStreetMap.
-          zIndex: 0 → los tiles van debajo de los marcadores.
-          maximumZ: 19 → zoom máximo soportado por OSM (evita pedir tiles inexistentes).
-          flipY: false → las coordenadas Y de OSM no están invertidas (estándar TMS).
-        */}
-        <UrlTile
-          urlTemplate={OSM_TILE_URL}
-          maximumZ={19}
-          flipY={false}
-          zIndex={0}
-          // tileSize: los tiles OSM son 256x256 píxeles
-          tileSize={256}
-        />
-
-        {/* Marcadores de tareas */}
-        {tareasMapa.map((tarea) => (
-          <MarcadorTarea
-            key={tarea.id}
-            tarea={tarea}
-            categoria={categorias.find((c) => c.id === tarea.categoriaId)}
-            mostrarRadio={true}
-            alVerDetalle={(id) => enrutador.push(`/tarea/${id}`)}
-          />
-        ))}
-      </MapView>
+        onVerDetalle={(id) => enrutador.push(`/tarea/${id}`)}
+        onBoundsChange={setLimitesMapa}
+      />
 
       {/* ── Cabecera flotante sobre el mapa ── */}
       <SafeAreaView style={estilos.cabeceraFlotante} edges={['top']}>
@@ -207,7 +137,7 @@ export default function PantallaMapa() {
           </TouchableOpacity>
         </View>
 
-        {/* Barra de búsqueda (decorativa en Fase 3 — funcional en Fase 4) */}
+        {/* Barra de búsqueda */}
         <TouchableOpacity
           style={estilos.barraBusqueda}
           onPress={() => enrutador.push('/(tabs)/buscar')}
@@ -231,10 +161,7 @@ export default function PantallaMapa() {
 
       {/* ── Botón recentrar en ubicación ── */}
       <TouchableOpacity
-        style={[
-          estilos.botonRecentrar,
-          !ubicacion.disponible && { opacity: 0.5 },
-        ]}
+        style={[estilos.botonRecentrar, !ubicacion.disponible && { opacity: 0.5 }]}
         onPress={centrarEnUsuario}
         disabled={!ubicacion.disponible}
       >
@@ -253,7 +180,10 @@ export default function PantallaMapa() {
                 : `${tareasEnZona.length} ${tareasEnZona.length === 1 ? 'tarea' : 'tareas'} en esta zona`}
             </Text>
             <Text style={estilos.subtituloSheet}>
-              Radio visible: ~{Math.round(regionVisible.latitudeDelta * 111)}km • Mantén pulsado el mapa para añadir
+              {radioVisibleKm != null
+                ? `Radio visible: ~${radioVisibleKm}km • `
+                : ''}
+              Mantén pulsado el mapa para añadir
             </Text>
           </View>
           {tareasEnZona.length > 0 && (
@@ -277,16 +207,29 @@ export default function PantallaMapa() {
                   onPress={() => enrutador.push(`/tarea/${tarea.id}`)}
                   activeOpacity={0.8}
                 >
-                  <View style={[estilos.iconoTarjetaH, { backgroundColor: (cat?.color ?? Colores.primario) + '20' }]}>
+                  <View
+                    style={[
+                      estilos.iconoTarjetaH,
+                      { backgroundColor: (cat?.color ?? Colores.primario) + '20' },
+                    ]}
+                  >
                     {cat ? (
-                      <MaterialCommunityIcons name={cat.icono as any} size={18} color={cat.color} />
+                      <MaterialCommunityIcons
+                        name={cat.icono as any}
+                        size={18}
+                        color={cat.color}
+                      />
                     ) : (
                       <Ionicons name="location" size={18} color={Colores.primario} />
                     )}
                   </View>
-                  <Text style={estilos.tituloTarjetaH} numberOfLines={2}>{tarea.titulo}</Text>
+                  <Text style={estilos.tituloTarjetaH} numberOfLines={2}>
+                    {tarea.titulo}
+                  </Text>
                   {tarea.nombreLugar && (
-                    <Text style={estilos.lugarTarjetaH} numberOfLines={1}>{tarea.nombreLugar}</Text>
+                    <Text style={estilos.lugarTarjetaH} numberOfLines={1}>
+                      {tarea.nombreLugar}
+                    </Text>
                   )}
                 </TouchableOpacity>
               );

@@ -19,6 +19,7 @@
 import { Tabs } from 'expo-router';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colores, Radios } from '../../src/config/tema';
 
 // ──────────────────────────────────────────────
@@ -37,6 +38,12 @@ function BotonNuevaTarea({ onPress }: { onPress: () => void }) {
 }
 
 export default function LayoutTabs() {
+  // En Android con edgeToEdgeEnabled: true, el sistema no añade automáticamente
+  // el padding para la barra de navegación gestual. Debemos leerlo con
+  // useSafeAreaInsets() y sumarlo al alto y padding de la barra de tabs.
+  // Sin esto, la barra de tabs queda tapada por los gestos del sistema.
+  const { bottom } = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
@@ -44,7 +51,10 @@ export default function LayoutTabs() {
         // Colores de la barra inferior
         tabBarActiveTintColor: Colores.primario,
         tabBarInactiveTintColor: Colores.sobreSuperficieVariante,
-        tabBarStyle: estilos.barraTabs,
+        tabBarStyle: [estilos.barraTabs, {
+          height: 64 + bottom,
+          paddingBottom: 8 + bottom,
+        }],
         tabBarLabelStyle: estilos.etiquetaTab,
       }}
     >
@@ -132,8 +142,8 @@ const estilos = StyleSheet.create({
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.06,
     shadowRadius: 16,
-    height: 64,
-    paddingBottom: 8,
+    // height y paddingBottom se calculan dinámicamente en LayoutTabs
+    // sumando el inset inferior del sistema (gesto de navegación de Android)
     paddingTop: 8,
   },
   etiquetaTab: {

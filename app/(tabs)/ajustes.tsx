@@ -10,7 +10,7 @@
  * ============================================================
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -20,11 +20,14 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useConfigStore } from '../../src/stores/useConfigStore';
+import { useAuthStore } from '../../src/stores/useAuthStore';
+import { useListaStore } from '../../src/stores/useListaStore';
 import { SelectorRadio } from '../../src/components/tarea/SelectorRadio';
 import { Colores, Espaciado, Radios, Sombras } from '../../src/config/tema';
 import type { ModoTransporte } from '../../src/models/usuario.modelo';
@@ -35,6 +38,8 @@ import {
   eliminarEventoTarea,
 } from '../../src/services/calendario.servicio';
 import { obtenerEstadisticas, obtenerTareas, type Estadisticas } from '../../src/services/basedatos.servicio';
+import { obtenerPerfil } from '../../src/services/perfil.servicio';
+import type { PerfilUsuario } from '../../src/models/usuario.modelo';
 
 const MODOS_TRANSPORTE: { valor: ModoTransporte; icono: keyof typeof Ionicons.glyphMap; etiqueta: string }[] = [
   { valor: 'automatico', icono: 'phone-portrait-outline', etiqueta: 'Auto' },
@@ -44,13 +49,22 @@ const MODOS_TRANSPORTE: { valor: ModoTransporte; icono: keyof typeof Ionicons.gl
 ];
 
 export default function PantallaAjustes() {
+  const enrutador = useRouter();
   const { config, cargarConfiguracion, actualizarPreferencia } = useConfigStore();
+  const { sesion, esInvitado, cerrarSesion: cerrarSesionAuth } = useAuthStore();
+  const { listas, cargarListas } = useListaStore();
   const [estadisticas, setEstadisticas] = useState<Estadisticas | null>(null);
   const [exportando, setExportando] = useState(false);
+  const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
 
   useEffect(() => {
     cargarConfiguracion();
-  }, []);
+    // Cargar perfil de Supabase si hay sesión activa
+    if (sesion?.user?.id) {
+      obtenerPerfil(sesion.user.id).then(setPerfil).catch(() => {});
+      cargarListas();
+    }
+  }, [sesion?.user?.id]);
 
   // Recargar estadísticas cada vez que el usuario vuelve a esta pestaña,
   // para que el contador de pendientes refleje las tareas creadas/completadas recientemente.
@@ -68,6 +82,25 @@ export default function PantallaAjustes() {
       setEstadisticas({ totalCompletadas: 0, completadasEsteMes: 0, pendientes: 0, categoriaMasUsada: null });
     }
   }, []);
+
+  // ── Cerrar sesión ─────────────────────────────
+  const handleCerrarSesion = useCallback(() => {
+    Alert.alert(
+      'Cerrar sesión',
+      '¿Seguro que quieres cerrar sesión? Tus tareas quedan guardadas localmente.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Cerrar sesión',
+          style: 'destructive',
+          onPress: async () => {
+            await cerrarSesionAuth();
+            enrutador.replace('/(auth)/login');
+          },
+        },
+      ]
+    );
+  }, [cerrarSesionAuth, enrutador]);
 
   // ── Exportar ──────────────────────────────────
 
@@ -144,6 +177,121 @@ export default function PantallaAjustes() {
       </View>
 
       <ScrollView contentContainerStyle={estilos.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* ── Cuenta (Fase 5) ── */}
+        <Text style={estilos.tituloSeccion}>Cuenta</Text>
+        {sesion ? (
+          <View style={estilos.tarjeta}>
+            {/* Avatar + nombre + email */}
+            <View style={estilos.filaCuenta}>
+              <View style={estilos.circuloAvatar}>
+                {perfil?.avatarUrl
+                  ? <Image source={{ uri: perfil.avatarUrl }} style={estilos.imagenAvatar} />
+                  : <Ionicons name="person" size={28} color={Colores.primario} />
+                }
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={estilos.nombreCuenta} numberOfLines={1}>
+                  {esInvitado ? 'Invitado' : (perfil?.nombre || 'Sin nombre')}
+                </Text>
+                <Text style={estilos.emailCuenta} numberOfLines={1}>
+                  {esInvitado ? 'Sesión anónima' : (sesion.user.email ?? '')}
+                </Text>
+              </View>
+            </View>
+
+            {/* Banner para invitados: invitar a registrarse */}
+            {esInvitado && (
+              <TouchableOpacity
+                style={estilos.bannerInvitado}
+                onPress={() => enrutador.push('/(auth)/registro' as any)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="cloud-upload-outline" size={18} color={Colores.primario} />
+                <Text style={estilos.textoBannerInvitado}>
+                  Crea una cuenta para sincronizar tus tareas en todos tus dispositivos
+                </Text>
+                <Ionicons name="chevron-forward" size={14} color={Colores.primario} />
+              </TouchableOpacity>
+            )}
+
+            <Separador />
+            <TouchableOpacity style={estilos.filaAccion} onPress={handleCerrarSesion} activeOpacity={0.75}>
+              <Ionicons name="log-out-outline" size={20} color={Colores.error} />
+              <Text style={[estilos.etiquetaAjuste, { color: Colores.error, flex: 1 }]}>Cerrar sesión</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={estilos.tarjeta}>
+            <TouchableOpacity
+              style={estilos.filaAccion}
+              onPress={() => enrutador.push('/(auth)/login' as any)}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="log-in-outline" size={20} color={Colores.primario} />
+              <Text style={[estilos.etiquetaAjuste, { flex: 1 }]}>Iniciar sesión</Text>
+              <Ionicons name="chevron-forward" size={16} color={Colores.sobreSuperficieVariante} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── Listas compartidas (Fase 5) ── */}
+        {sesion && !esInvitado && (
+          <>
+            <Text style={[estilos.tituloSeccion, { marginTop: Espaciado.xl }]}>Listas compartidas</Text>
+            <View style={estilos.tarjeta}>
+              {/* Botones crear / unirse */}
+              <View style={estilos.filaExportar}>
+                <TouchableOpacity
+                  style={estilos.botonExportar}
+                  onPress={() => enrutador.push('/lista/nueva' as any)}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color={Colores.primario} />
+                  <Text style={estilos.textoBotonExportar}>Crear lista</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={estilos.botonExportar}
+                  onPress={() => enrutador.push('/lista/unirse' as any)}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="enter-outline" size={20} color={Colores.primario} />
+                  <Text style={estilos.textoBotonExportar}>Unirse</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Listado de listas del usuario */}
+              {listas.length > 0 && (
+                <>
+                  <View style={{ height: 1, backgroundColor: Colores.superficieContenedorBaja, marginVertical: Espaciado.xs }} />
+                  {listas.map((lista, idx) => (
+                    <TouchableOpacity
+                      key={lista.id}
+                      style={estilos.filaAccion}
+                      onPress={() => enrutador.push(`/lista/${lista.id}` as any)}
+                      activeOpacity={0.75}
+                    >
+                      <Ionicons name="people-outline" size={20} color={Colores.primario} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={estilos.etiquetaAjuste} numberOfLines={1}>{lista.nombre}</Text>
+                        <Text style={estilos.subtextoAjuste}>
+                          Código: {lista.codigo.toUpperCase()} · {lista.rol ?? 'editor'}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={Colores.sobreSuperficieVariante} />
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+
+              {listas.length === 0 && (
+                <Text style={[estilos.subtextoAjuste, { textAlign: 'center', paddingVertical: Espaciado.sm }]}>
+                  Todavía no participas en ninguna lista. Crea una o únete con un código.
+                </Text>
+              )}
+            </View>
+          </>
+        )}
 
         {/* ── Estadísticas ── */}
         <Text style={estilos.tituloSeccion}>Resumen de actividad</Text>
@@ -309,8 +457,25 @@ export default function PantallaAjustes() {
           />
         </View>
 
+        {/* ── Acerca de / Tutorial ── */}
+        <Text style={[estilos.tituloSeccion, { marginTop: Espaciado.xl }]}>Acerca de</Text>
+        <View style={estilos.tarjeta}>
+          <TouchableOpacity
+            style={estilos.filaAccion}
+            activeOpacity={0.75}
+            onPress={() => enrutador.push('/(auth)/onboarding' as any)}
+          >
+            <Ionicons name="book-outline" size={20} color={Colores.primario} />
+            <View style={{ flex: 1 }}>
+              <Text style={estilos.etiquetaAjuste}>Ver tutorial de introducción</Text>
+              <Text style={estilos.subtextoAjuste}>Repasa cómo funciona GeoTask paso a paso</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={Colores.sobreSuperficieVariante} />
+          </TouchableOpacity>
+        </View>
+
         {/* Versión */}
-        <Text style={estilos.version}>GeoTask v1.0.0 — Fase 4</Text>
+        <Text style={estilos.version}>GeoTask v1.0.0 — Fase 5</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -412,4 +577,24 @@ const estilos = StyleSheet.create({
   },
   textoBotonExportar: { fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colores.primario },
   version: { textAlign: 'center', fontFamily: 'Inter_400Regular', fontSize: 12, color: Colores.sobreSuperficieVariante, marginTop: Espaciado.xl, opacity: 0.5 },
+  filaAccion: { flexDirection: 'row', alignItems: 'center', gap: Espaciado.md },
+  // Cuenta
+  filaCuenta: { flexDirection: 'row', alignItems: 'center', gap: Espaciado.md, paddingBottom: Espaciado.sm },
+  circuloAvatar: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: Colores.primarioContenedor,
+    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+  },
+  imagenAvatar: { width: 52, height: 52 },
+  nombreCuenta: { fontFamily: 'Inter_600SemiBold', fontSize: 16, color: Colores.sobreSuperficie },
+  emailCuenta: { fontFamily: 'Inter_400Regular', fontSize: 13, color: Colores.sobreSuperficieVariante, marginTop: 2 },
+  bannerInvitado: {
+    flexDirection: 'row', alignItems: 'center', gap: Espaciado.sm,
+    backgroundColor: Colores.primarioContenedor,
+    borderRadius: Radios.boton, padding: Espaciado.md, marginTop: Espaciado.sm,
+  },
+  textoBannerInvitado: {
+    flex: 1, fontFamily: 'Inter_400Regular', fontSize: 13,
+    color: Colores.primario, lineHeight: 18,
+  },
 });

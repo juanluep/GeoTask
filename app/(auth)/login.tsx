@@ -17,7 +17,7 @@
  * ============================================================
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -28,52 +28,61 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuthStore } from '../../src/stores/useAuthStore';
 import { Colores, Espaciado, Radios } from '../../src/config/tema';
 
 export default function PantallaLogin() {
   const enrutador = useRouter();
+  const { iniciarSesion, loginConGoogle, loginConApple, continuarComoInvitado,
+          cargando, error, limpiarError, sesion } = useAuthStore();
 
-  // ── Estado del formulario ─────────────────────────────────────────────────
-  // Cada campo del formulario tiene su propio estado.
-  // React re-renderiza el componente cada vez que alguno cambia,
-  // pero solo actualiza los elementos del DOM nativo afectados (es eficiente).
   const [email, setEmail] = useState('');
   const [contrasena, setContrasena] = useState('');
-  // contrasenaVisible alterna entre mostrar "••••••••" o el texto real
   const [contrasenaVisible, setContrasenaVisible] = useState(false);
-  // cargando bloquea el botón y muestra un spinner mientras "procesamos" el login
-  const [cargando, setCargando] = useState(false);
 
-  // ── Manejadores de eventos ────────────────────────────────────────────────
+  // Cuando la sesión aparece (login exitoso vía cualquier método) → tabs
+  useEffect(() => {
+    if (sesion) {
+      enrutador.replace('/(tabs)');
+    }
+  }, [sesion]);
 
-  /**
-   * Inicia sesión con email y contraseña.
-   *
-   * Por ahora simula un delay de 800ms con setTimeout para que el spinner
-   * de carga sea visible y el usuario perciba que "algo está pasando".
-   * TODO (Fase 5): Reemplazar setTimeout por llamada real a Supabase:
-   *   const { error } = await supabase.auth.signInWithPassword({ email, password })
-   */
+  // Mostrar errores de Supabase como Alert
+  useEffect(() => {
+    if (error) {
+      Alert.alert('Error al iniciar sesión', error, [
+        { text: 'Entendido', onPress: limpiarError },
+      ]);
+    }
+  }, [error]);
+
   async function manejarLogin() {
-    setCargando(true);
-    // Promise + setTimeout = forma idiomática de "esperar X ms" con async/await
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    setCargando(false);
-    // replace() navega a tabs sin dejar login en el historial
-    enrutador.replace('/(tabs)');
+    if (!email.trim() || !contrasena) {
+      Alert.alert('Campos incompletos', 'Introduce tu email y contraseña.');
+      return;
+    }
+    await iniciarSesion(email, contrasena);
   }
 
-  /**
-   * Navega a las tabs sin crear cuenta.
-   * El modo invitado permite explorar la app pero con funcionalidad limitada.
-   * TODO (Fase 5): Crear sesión anónima con Supabase para persistir datos locales.
-   */
-  function manejarContinuarComoInvitado() {
-    enrutador.replace('/(tabs)');
+  async function manejarContinuarComoInvitado() {
+    await continuarComoInvitado();
+  }
+
+  async function manejarLoginSocial(proveedor: string) {
+    if (proveedor === 'Google') {
+      await loginConGoogle();
+    } else if (proveedor === 'Apple') {
+      await loginConApple();
+    }
+  }
+
+  function manejarRegistro() {
+    enrutador.push('/(auth)/registro');
   }
 
   return (
@@ -185,7 +194,10 @@ export default function PantallaLogin() {
             </View>
 
             {/* Link "¿Olvidaste tu contraseña?" — alineado a la derecha */}
-            <TouchableOpacity style={estilos.linkOlvideContrasena}>
+            <TouchableOpacity
+              style={estilos.linkOlvideContrasena}
+              onPress={() => enrutador.push('/(auth)/recuperar')}
+            >
               <Text style={estilos.textoLinkSecundario}>
                 ¿Olvidaste tu contraseña?
               </Text>
@@ -231,7 +243,7 @@ export default function PantallaLogin() {
               TODO (Fase 5): Integrar con @react-native-google-signin/google-signin
               para mostrar el logo oficial y el flujo OAuth real.
             */}
-            <TouchableOpacity style={estilos.botonSocial} activeOpacity={0.8}>
+            <TouchableOpacity style={estilos.botonSocial} activeOpacity={0.8} onPress={() => manejarLoginSocial('Google')}>
               <Text style={estilos.emojiSocial}>G</Text>
               <Text style={estilos.textoBotonSocial}>Google</Text>
             </TouchableOpacity>
@@ -241,7 +253,7 @@ export default function PantallaLogin() {
               Solo disponible en iOS. En Android se puede ocultar con Platform.OS.
               TODO (Fase 5): Integrar con expo-apple-authentication.
             */}
-            <TouchableOpacity style={estilos.botonSocial} activeOpacity={0.8}>
+            <TouchableOpacity style={estilos.botonSocial} activeOpacity={0.8} onPress={() => manejarLoginSocial('Apple')}>
               <Ionicons
                 name="logo-apple"
                 size={20}
@@ -256,7 +268,7 @@ export default function PantallaLogin() {
             {/* Fila "¿No tienes cuenta? Regístrate" */}
             <View style={estilos.filaRegistro}>
               <Text style={estilos.textoGris}>¿No tienes cuenta? </Text>
-              <TouchableOpacity>
+              <TouchableOpacity onPress={manejarRegistro}>
                 {/* color secundario (#b4136d) para el link de acción afirmativa */}
                 <Text style={estilos.textoLinkPrimario}>Regístrate</Text>
               </TouchableOpacity>

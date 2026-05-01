@@ -28,7 +28,11 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as SecureStore from 'expo-secure-store';
 import { Colores, Espaciado, Radios } from '../../src/config/tema';
+
+// Misma clave que usa app/index.tsx para detectar si el onboarding ya se vio
+const CLAVE_ONBOARDING = 'onboarding_completado';
 
 // Ancho de la pantalla: lo necesitamos para que cada slide ocupe exactamente
 // el 100% del ancho y el scroll horizontal se vea como paginación.
@@ -220,8 +224,12 @@ export default function PantallaOnboarding() {
   const esUltimoSlide = indiceActual === SLIDES.length - 1;
 
   /** Avanza al siguiente slide o navega al login si ya estamos en el último */
-  function manejarSiguiente() {
+  async function manejarSiguiente() {
     if (esUltimoSlide) {
+      // Marcamos que el onboarding ya se completó.
+      // La próxima vez que el usuario abra la app, app/index.tsx leerá
+      // esta clave y saltará directamente a las tabs principales.
+      await SecureStore.setItemAsync(CLAVE_ONBOARDING, 'true').catch(() => {});
       // replace() navega sin dejar el onboarding en el historial.
       // Así, el botón "Atrás" en login no regresa al onboarding.
       enrutador.replace('/(auth)/login');
@@ -234,7 +242,9 @@ export default function PantallaOnboarding() {
   }
 
   /** Salta el tutorial completo e ir directamente al login */
-  function manejarSaltar() {
+  async function manejarSaltar() {
+    // También marcamos como completado al saltar, para no volver a mostrarlo
+    await SecureStore.setItemAsync(CLAVE_ONBOARDING, 'true').catch(() => {});
     enrutador.replace('/(auth)/login');
   }
 
