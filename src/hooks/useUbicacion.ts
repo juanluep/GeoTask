@@ -23,6 +23,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import * as Location from 'expo-location';
+import { registrarTodasLasGeocercas } from '../services/geocerca.servicio';
 import type { EstadoUbicacion, Coordenadas } from '../models/ubicacion.modelo';
 
 // ──────────────────────────────────────────────
@@ -74,24 +75,40 @@ export function useUbicacion() {
         return;
       }
 
-      setEstado((prev) => ({ ...prev, permiso: 'concedido', monitorizando: true }));
+      // 1.5. Pedir permiso background (imprescindible para geocercas desde el inicio)
+      let backStatus = await Location.getBackgroundPermissionsAsync();
+      if (backStatus.status !== 'granted' && backStatus.canAskAgain) {
+        backStatus = await Location.requestBackgroundPermissionsAsync();
+      }
 
-      // Obtener posición inicial rápida usando la caché del sistema.
-      // maxAge: 30000ms → acepta posiciones de hasta 30s de antigüedad.
-      // Esto evita esperar al GPS frío al abrir la app.
-      const posicionInicial = await Location.getCurrentPositionAsync({
-        accuracy: PRECISION_UBICACION,
+      const concedidoBack = backStatus.status === 'granted';
+      if (concedidoBack) {
+        // Al tener permiso, disparamos el registro que antes falló en _layout.tsx
+        registrarTodasLasGeocercas();
+      }
+
+      setEstado((prev) => ({ ...prev, permiso: concedidoBack ? 'siempre' : 'concedido', monitorizando: true }));
+
+      // 1. Obtener posición rápida de la caché para no bloquear la UI
+      // Esto devuelve casi instantáneamente la última ubicación conocida
+      const posicionCache = await Location.getLastKnownPositionAsync({
+        maxAge: 60000,
       });
+      if (posicionCache) {
+        actualizarCoordenadas(posicionCache);
+      } else {
+        // Si no hay caché, intentamos obtenerla, pero sin bloquear el watcher
+        Location.getCurrentPositionAsync({ accuracy: PRECISION_UBICACION })
+          .then(actualizarCoordenadas)
+          .catch(() => console.warn('No se pudo obtener getCurrentPositionAsync'));
+      }
 
-      actualizarCoordenadas(posicionInicial);
-
-      // Iniciar monitorización continua.
-      // watchPositionAsync devuelve una suscripción que hay que cancelar manualmente.
+      // 2. Iniciar monitorización continua.
+      // watchPositionAsync nos dará las coordenadas precisas en cuanto el GPS despierte
       refWatcher.current = await Location.watchPositionAsync(
         {
           accuracy: PRECISION_UBICACION,
           distanceInterval: DISTANCIA_MINIMA_METROS,
-          // timeInterval: 5000, // También podemos limitar por tiempo (ms)
         },
         actualizarCoordenadas
       );

@@ -68,7 +68,8 @@ export async function buscarLugares(
     // en lugar de devolver establecimientos de otros países.
     const lat = latitud ?? ESPANA_LAT;
     const lon = longitud ?? ESPANA_LON;
-    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(consulta)}&limit=${limite}&lat=${lat}&lon=${lon}`;
+    // location_bias_scale (por defecto 0.2): un valor mayor da más peso a la proximidad geográfica frente a la relevancia del texto.
+    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(consulta)}&limit=${limite}&lat=${lat}&lon=${lon}&location_bias_scale=0.6`;
 
     const respuesta = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' },

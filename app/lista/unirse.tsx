@@ -10,7 +10,7 @@
  * ============================================================
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,23 +22,31 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useListaStore } from '../../src/stores/useListaStore';
 
 export default function PantallaUnirseALista() {
-  const [codigo, setCodigo] = useState('');
+  const params = useLocalSearchParams<{ codigo?: string }>();
+  const [codigo, setCodigo] = useState(params.codigo ?? '');
   const { unirseAListaPorCodigo, cargando } = useListaStore();
   const enrutador = useRouter();
   const { top } = useSafeAreaInsets();
 
-  async function manejarUnirse() {
-    if (codigo.trim().length < 8) {
+  useEffect(() => {
+    if (params.codigo && params.codigo.length === 8) {
+      manejarUnirse(params.codigo);
+    }
+  }, [params.codigo]);
+
+  async function manejarUnirse(codigoAUnir?: string) {
+    const cod = codigoAUnir ?? codigo;
+    if (cod.trim().length < 8) {
       Alert.alert('Código inválido', 'El código debe tener 8 caracteres.');
       return;
     }
 
-    const lista = await unirseAListaPorCodigo(codigo.trim());
+    const lista = await unirseAListaPorCodigo(cod.trim());
 
     if (lista) {
       Alert.alert(
@@ -89,7 +97,7 @@ export default function PantallaUnirseALista() {
             estilos.botonUnirse,
             (codigo.trim().length < 8 || cargando) && estilos.botonDeshabilitado,
           ]}
-          onPress={manejarUnirse}
+          onPress={() => manejarUnirse()}
           disabled={codigo.trim().length < 8 || cargando}
         >
           {cargando ? (

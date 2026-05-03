@@ -204,6 +204,8 @@ export const useTareaStore = create<EstadoTareas>((set, get) => ({
         cargando: false,
       }));
 
+      registrarTodasLasGeocercas().catch(() => {});
+
       // Fase 5: sync en segundo plano
       const userId = useAuthStore.getState().userId;
       if (userId && tareaActualizada) {

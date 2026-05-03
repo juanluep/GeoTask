@@ -18,6 +18,8 @@ import {
   CONFIGURACION_PREDETERMINADA,
 } from '../models/usuario.modelo';
 
+import { registrarTodasLasGeocercas } from '../services/geocerca.servicio';
+
 interface EstadoConfiguracion {
   config: ConfiguracionUsuario;
   cargando: boolean;
@@ -63,5 +65,11 @@ export const useConfigStore = create<EstadoConfiguracion>((set, get) => ({
       config: { ...estado.config, [clave]: valor },
     }));
     await guardarConfiguracion(clave as string, valor);
+
+    // Si cambiamos el radio por defecto o la verificación de horarios,
+    // refrescamos las geocercas registradas.
+    if (clave === 'radioPreferido' || clave === 'verificarHorarios' || clave === 'ahorroBateria') {
+      registrarTodasLasGeocercas().catch(() => {});
+    }
   },
 }));

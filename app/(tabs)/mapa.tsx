@@ -26,6 +26,11 @@ import {
   ScrollView,
   Dimensions,
   ActivityIndicator,
+  LayoutAnimation,
+  UIManager,
+  Platform,
+  TextInput,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -34,9 +39,14 @@ import { useTareaStore } from '../../src/stores/useTareaStore';
 import { useCategoriaStore } from '../../src/stores/useCategoriaStore';
 import { useUbicacion } from '../../src/hooks/useUbicacion';
 import { MapaLeaflet, type LimitesMapaProps } from '../../src/components/mapa/MapaLeaflet';
+import { BuscadorLugares } from '../../src/components/compartido/BuscadorLugares';
 import { Colores, Espaciado, Radios, Sombras } from '../../src/config/tema';
 import { geocodingInverso } from '../../src/services/lugares.servicio';
 import type { Tarea } from '../../src/models/tarea.modelo';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const { height: ALTO_PANTALLA } = Dimensions.get('window');
 
@@ -52,18 +62,37 @@ export default function PantallaMapa() {
   const [limitesMapa, setLimitesMapa] = useState<LimitesMapaProps | null>(null);
   const [tareasMapa, setTareasMapa] = useState<Tarea[]>([]);
   const [geocodificando, setGeocodificando] = useState(false);
-  // Incrementar este contador dispara "centrar en usuario" en el mapa
   const [comandoCentrar, setComandoCentrar] = useState(0);
+  const [sheetColapsado, setSheetColapsado] = useState(true);
+  const [filtroTexto, setFiltroTexto] = useState(''); // El texto que escribe el usuario para filtrar
+  const [filtroCategoriaId, setFiltroCategoriaId] = useState<string | null>(null);
+  const [modalFiltros, setModalFiltros] = useState(false);
+  const [comandoCentrarCoords, setComandoCentrarCoords] = useState<{ lat: number; lon: number; id: number } | null>(null);
 
   useEffect(() => {
     cargarTareas();
     cargarCategorias();
   }, []);
 
-  // Solo mostrar tareas con coordenadas válidas
+  // Filtrar tareas según texto y categoría
   useEffect(() => {
-    setTareasMapa(tareas.filter((t) => t.latitud !== 0 && t.longitud !== 0));
-  }, [tareas]);
+    let filtradas = tareas.filter((t) => t.latitud !== 0 && t.longitud !== 0);
+    
+    if (filtroCategoriaId) {
+      filtradas = filtradas.filter((t) => t.categoriaId === filtroCategoriaId);
+    }
+    
+    if (filtroTexto.trim()) {
+      const textoLower = filtroTexto.toLowerCase();
+      filtradas = filtradas.filter((t) => 
+        t.titulo.toLowerCase().includes(textoLower) || 
+        t.nombreLugar?.toLowerCase().includes(textoLower) ||
+        t.direccion?.toLowerCase().includes(textoLower)
+      );
+    }
+    
+    setTareasMapa(filtradas);
+  }, [tareas, filtroTexto, filtroCategoriaId]);
 
   /** Calcula tareas dentro de los límites visibles del mapa.
    *  Si los bounds aún no están disponibles (el WebView no ha disparado
@@ -83,6 +112,11 @@ export default function PantallaMapa() {
   function centrarEnUsuario() {
     if (!ubicacion.disponible) return;
     setComandoCentrar((n) => n + 1);
+  }
+
+  function toggleSheet() {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSheetColapsado(!sheetColapsado);
   }
 
   /**
@@ -115,19 +149,8 @@ export default function PantallaMapa() {
 
   return (
     <View style={estilos.contenedor}>
-      {/* ── Mapa Leaflet (ocupa toda la pantalla) ── */}
-      <MapaLeaflet
-        tareas={tareasMapa}
-        categorias={categorias}
-        ubicacion={ubicacion.coordenadas}
-        comandoCentrar={comandoCentrar}
-        onLongPress={manejarLongPress}
-        onVerDetalle={(id) => enrutador.push(`/tarea/${id}`)}
-        onBoundsChange={setLimitesMapa}
-      />
-
-      {/* ── Cabecera flotante sobre el mapa ── */}
-      <SafeAreaView style={estilos.cabeceraFlotante} edges={['top']}>
+      {/* ── Cabecera Fija ── */}
+      <SafeAreaView style={estilos.cabecera} edges={['top']}>
         <View style={estilos.filaCabecera}>
           <Text style={estilos.logoMapa}>
             <Text style={{ color: Colores.primario }}>●</Text> GeoTask
@@ -137,163 +160,231 @@ export default function PantallaMapa() {
           </TouchableOpacity>
         </View>
 
-        {/* Barra de búsqueda */}
-        <TouchableOpacity
-          style={estilos.barraBusqueda}
-          onPress={() => enrutador.push('/(tabs)/buscar')}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="search-outline" size={18} color={Colores.sobreSuperficieVariante} />
-          <Text style={estilos.placeholderBusqueda}>Buscar zona o tarea...</Text>
-          <View style={estilos.botonFiltroMapa}>
-            <Ionicons name="options-outline" size={18} color={Colores.primario} />
+        {/* Barra de búsqueda (BuscadorLugares + Filtro) */}
+        <View style={estilos.contenedorBuscadorSuperior}>
+          <View style={{ flex: 1, zIndex: 50 }}>
+            <BuscadorLugares
+              marcador="Buscar lugar en el mapa..."
+              alSeleccionar={(resultado) => {
+                setComandoCentrarCoords({
+                  lat: resultado.coordenadas.latitud,
+                  lon: resultado.coordenadas.longitud,
+                  id: Date.now()
+                });
+              }}
+              alLimpiar={() => setFiltroTexto('')}
+              latitud={limitesMapa ? (limitesMapa.norte + limitesMapa.sur) / 2 : ubicacion.coordenadas?.latitud}
+              longitud={limitesMapa ? (limitesMapa.este + limitesMapa.oeste) / 2 : ubicacion.coordenadas?.longitud}
+            />
           </View>
-        </TouchableOpacity>
+          <TouchableOpacity style={estilos.botonFiltroMapa} onPress={() => setModalFiltros(true)}>
+            <Ionicons name="options-outline" size={18} color={Colores.primario} />
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
 
-      {/* ── Indicador de geocodificación al hacer long-press ── */}
-      {geocodificando && (
-        <View style={estilos.bannerGeocodificando}>
-          <ActivityIndicator size="small" color={Colores.primario} />
-          <Text style={estilos.textoBannerGeo}>Obteniendo dirección...</Text>
-        </View>
-      )}
+      <View style={estilos.wrapperMapa}>
+        {/* ── Mapa Leaflet ── */}
+        <MapaLeaflet
+          tareas={tareasMapa}
+          categorias={categorias}
+          ubicacion={ubicacion.coordenadas}
+          comandoCentrar={comandoCentrar}
+          comandoCentrarCoords={comandoCentrarCoords}
+          onLongPress={manejarLongPress}
+          onVerDetalle={(id) => enrutador.push(`/tarea/${id}`)}
+          onBoundsChange={setLimitesMapa}
+        />
 
-      {/* ── Botón recentrar en ubicación ── */}
-      <TouchableOpacity
-        style={[estilos.botonRecentrar, !ubicacion.disponible && { opacity: 0.5 }]}
-        onPress={centrarEnUsuario}
-        disabled={!ubicacion.disponible}
-      >
-        <Ionicons name="locate" size={22} color={Colores.primario} />
-      </TouchableOpacity>
-
-      {/* ── Bottom sheet: tareas en la zona visible ── */}
-      <View style={estilos.bottomSheet}>
-        <View style={estilos.asaBottomSheet} />
-
-        <View style={estilos.cabeceraSheet}>
-          <View>
-            <Text style={estilos.tituloSheet}>
-              {tareasEnZona.length === 0
-                ? 'Sin tareas en esta zona'
-                : `${tareasEnZona.length} ${tareasEnZona.length === 1 ? 'tarea' : 'tareas'} en esta zona`}
-            </Text>
-            <Text style={estilos.subtituloSheet}>
-              {radioVisibleKm != null
-                ? `Radio visible: ~${radioVisibleKm}km • `
-                : ''}
-              Mantén pulsado el mapa para añadir
-            </Text>
+        {/* ── Indicador de geocodificación al hacer long-press ── */}
+        {geocodificando && (
+          <View style={estilos.bannerGeocodificando}>
+            <ActivityIndicator size="small" color={Colores.primario} />
+            <Text style={estilos.textoBannerGeo}>Obteniendo dirección...</Text>
           </View>
-          {tareasEnZona.length > 0 && (
-            <Text style={estilos.badgeZona}>ZONA</Text>
+        )}
+
+        {/* ── Botón recentrar en ubicación ── */}
+        <TouchableOpacity
+          style={[estilos.botonRecentrar, !ubicacion.disponible && { opacity: 0.5 }]}
+          onPress={centrarEnUsuario}
+          disabled={!ubicacion.disponible}
+        >
+          <Ionicons name="locate" size={22} color={Colores.primario} />
+        </TouchableOpacity>
+
+        {/* ── Bottom sheet: tareas en la zona visible ── */}
+        <View style={estilos.bottomSheet}>
+          <TouchableOpacity 
+            style={estilos.areaAsa}
+            onPress={toggleSheet}
+            activeOpacity={0.8}
+          >
+            <View style={estilos.asaBottomSheet} />
+          </TouchableOpacity>
+
+          <View style={estilos.cabeceraSheet}>
+            <View>
+              <Text style={estilos.tituloSheet}>
+                {tareasEnZona.length === 0
+                  ? 'Sin tareas en esta zona'
+                  : `${tareasEnZona.length} ${tareasEnZona.length === 1 ? 'tarea' : 'tareas'} en esta zona`}
+              </Text>
+              <Text style={estilos.subtituloSheet}>
+                {radioVisibleKm != null
+                  ? `Radio visible: ~${radioVisibleKm}km • `
+                  : ''}
+                {sheetColapsado ? 'Toca para expandir' : 'Mantén pulsado el mapa para añadir'}
+              </Text>
+            </View>
+            {/* ZONA badge quitado por petición */}
+          </View>
+
+          {/* Lista horizontal de tarjetas */}
+          {!sheetColapsado && (
+            tareasEnZona.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={estilos.listaHorizontal}
+              >
+                {tareasEnZona.slice(0, 6).map((tarea) => {
+                  const cat = categorias.find((c) => c.id === tarea.categoriaId);
+                  return (
+                    <TouchableOpacity
+                      key={tarea.id}
+                      style={estilos.tarjetaHorizontal}
+                      onPress={() => enrutador.push(`/tarea/${tarea.id}`)}
+                      activeOpacity={0.8}
+                    >
+                      <View
+                        style={[
+                          estilos.iconoTarjetaH,
+                          { backgroundColor: (cat?.color ?? Colores.primario) + '20' },
+                        ]}
+                      >
+                        {cat ? (
+                          <MaterialCommunityIcons
+                            name={cat.icono as any}
+                            size={18}
+                            color={cat.color}
+                          />
+                        ) : (
+                          <Ionicons name="location" size={18} color={Colores.primario} />
+                        )}
+                      </View>
+                      <Text style={estilos.tituloTarjetaH} numberOfLines={2}>
+                        {tarea.titulo}
+                      </Text>
+                      {tarea.nombreLugar && (
+                        <Text style={estilos.lugarTarjetaH} numberOfLines={1}>
+                          {tarea.nombreLugar}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <TouchableOpacity
+                style={estilos.botonNuevaEnZona}
+                onPress={() => enrutador.push('/(tabs)/nueva')}
+              >
+                <Ionicons name="add" size={18} color={Colores.primario} />
+                <Text style={estilos.textoNuevaEnZona}>Añadir tarea aquí</Text>
+              </TouchableOpacity>
+            )
           )}
         </View>
-
-        {/* Lista horizontal de tarjetas */}
-        {tareasEnZona.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={estilos.listaHorizontal}
-          >
-            {tareasEnZona.slice(0, 6).map((tarea) => {
-              const cat = categorias.find((c) => c.id === tarea.categoriaId);
-              return (
-                <TouchableOpacity
-                  key={tarea.id}
-                  style={estilos.tarjetaHorizontal}
-                  onPress={() => enrutador.push(`/tarea/${tarea.id}`)}
-                  activeOpacity={0.8}
-                >
-                  <View
-                    style={[
-                      estilos.iconoTarjetaH,
-                      { backgroundColor: (cat?.color ?? Colores.primario) + '20' },
-                    ]}
-                  >
-                    {cat ? (
-                      <MaterialCommunityIcons
-                        name={cat.icono as any}
-                        size={18}
-                        color={cat.color}
-                      />
-                    ) : (
-                      <Ionicons name="location" size={18} color={Colores.primario} />
-                    )}
-                  </View>
-                  <Text style={estilos.tituloTarjetaH} numberOfLines={2}>
-                    {tarea.titulo}
-                  </Text>
-                  {tarea.nombreLugar && (
-                    <Text style={estilos.lugarTarjetaH} numberOfLines={1}>
-                      {tarea.nombreLugar}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        ) : (
-          <TouchableOpacity
-            style={estilos.botonNuevaEnZona}
-            onPress={() => enrutador.push('/(tabs)/nueva')}
-          >
-            <Ionicons name="add" size={18} color={Colores.primario} />
-            <Text style={estilos.textoNuevaEnZona}>Añadir tarea aquí</Text>
-          </TouchableOpacity>
-        )}
       </View>
+
+      {/* Modal de Filtros */}
+      <Modal visible={modalFiltros} transparent animationType="fade">
+        <View style={estilos.modalOverlay}>
+          <View style={estilos.modalBox}>
+            <Text style={estilos.modalTitulo}>Filtrar por categoría</Text>
+            
+            <ScrollView style={{ maxHeight: 250, marginVertical: Espaciado.md }}>
+              <TouchableOpacity
+                style={[
+                  estilos.opcionFiltro,
+                  filtroCategoriaId === null && estilos.opcionFiltroActiva
+                ]}
+                onPress={() => { setFiltroCategoriaId(null); setModalFiltros(false); }}
+              >
+                <Text style={[
+                  estilos.textoOpcionFiltro,
+                  filtroCategoriaId === null && estilos.textoOpcionFiltroActiva
+                ]}>Todas las categorías</Text>
+              </TouchableOpacity>
+              
+              {categorias.map(cat => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    estilos.opcionFiltro,
+                    filtroCategoriaId === cat.id && estilos.opcionFiltroActiva
+                  ]}
+                  onPress={() => { setFiltroCategoriaId(cat.id); setModalFiltros(false); }}
+                >
+                  <MaterialCommunityIcons name={cat.icono as any} size={20} color={filtroCategoriaId === cat.id ? Colores.blanco : cat.color} />
+                  <Text style={[
+                    estilos.textoOpcionFiltro,
+                    filtroCategoriaId === cat.id && estilos.textoOpcionFiltroActiva
+                  ]}>{cat.nombre}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <TouchableOpacity onPress={() => setModalFiltros(false)} style={estilos.botonCerrarModal}>
+              <Text style={estilos.textoBotonCerrarModal}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const estilos = StyleSheet.create({
-  contenedor: { flex: 1 },
-  // ── Cabecera flotante ──
-  cabeceraFlotante: {
+  contenedor: { flex: 1, backgroundColor: Colores.superficie },
+  // ── Cabecera Fija ──
+  cabecera: {
+    backgroundColor: Colores.superficie,
     paddingHorizontal: Espaciado.base,
+    paddingBottom: Espaciado.md,
+    paddingTop: Espaciado.sm,
     gap: Espaciado.sm,
+    ...Sombras.sutil,
+    zIndex: 10,
   },
   filaCabecera: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: Espaciado.sm,
+    paddingVertical: Espaciado.xs,
   },
   logoMapa: {
     fontFamily: 'Inter_700Bold',
-    fontSize: 18,
-    color: Colores.blanco,
-    textShadowColor: 'rgba(0,0,0,0.4)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    fontSize: 22,
+    color: Colores.sobreSuperficie,
+    letterSpacing: -0.5,
   },
   botonCabecera: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: Colores.blanco,
     alignItems: 'center',
     justifyContent: 'center',
-    ...Sombras.sutil,
+    borderWidth: 1,
+    borderColor: Colores.superficieContenedorAlta,
   },
-  barraBusqueda: {
+  contenedorBuscadorSuperior: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colores.blanco,
-    borderRadius: Radios.boton,
-    paddingHorizontal: Espaciado.base,
-    height: 48,
     gap: Espaciado.sm,
-    ...Sombras.sutil,
-  },
-  placeholderBusqueda: {
-    flex: 1,
-    fontFamily: 'Inter_400Regular',
-    fontSize: 14,
-    color: Colores.sobreSuperficieVariante,
+    zIndex: 50, // Importante para que el dropdown sobrepase el WebView
   },
   botonFiltroMapa: {
     width: 32,
@@ -303,10 +394,15 @@ const estilos = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // ── Wrapper del Mapa ──
+  wrapperMapa: {
+    flex: 1,
+    position: 'relative',
+  },
   // ── Banner geocodificando ──
   bannerGeocodificando: {
     position: 'absolute',
-    top: 160,
+    top: Espaciado.base,
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
@@ -315,7 +411,8 @@ const estilos = StyleSheet.create({
     borderRadius: Radios.boton,
     paddingHorizontal: Espaciado.base,
     paddingVertical: Espaciado.sm,
-    ...Sombras.sutil,
+    ...Sombras.modal,
+    zIndex: 20,
   },
   textoBannerGeo: {
     fontFamily: 'Inter_500Medium',
@@ -326,7 +423,7 @@ const estilos = StyleSheet.create({
   botonRecentrar: {
     position: 'absolute',
     right: Espaciado.base,
-    bottom: 220,
+    bottom: 240,
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -334,6 +431,7 @@ const estilos = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...Sombras.sutil,
+    zIndex: 20,
   },
   // ── Bottom Sheet ──
   bottomSheet: {
@@ -346,16 +444,19 @@ const estilos = StyleSheet.create({
     borderTopRightRadius: Radios.modal,
     paddingHorizontal: Espaciado.base,
     paddingBottom: Espaciado.xxl,
-    paddingTop: Espaciado.md,
     ...Sombras.modal,
+    zIndex: 30,
+  },
+  areaAsa: {
+    paddingVertical: Espaciado.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   asaBottomSheet: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
+    width: 40,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: Colores.superficieContenedorAlta,
-    alignSelf: 'center',
-    marginBottom: Espaciado.base,
   },
   cabeceraSheet: {
     flexDirection: 'row',
@@ -423,5 +524,52 @@ const estilos = StyleSheet.create({
     fontFamily: 'Inter_600SemiBold',
     fontSize: 14,
     color: Colores.primario,
+  },
+  // ── Modal Filtros ──
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: Espaciado.xl,
+  },
+  modalBox: {
+    backgroundColor: Colores.blanco,
+    borderRadius: Radios.modal,
+    padding: Espaciado.xl,
+    ...Sombras.modal,
+  },
+  modalTitulo: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 18,
+    color: Colores.sobreSuperficie,
+  },
+  opcionFiltro: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Espaciado.md,
+    borderRadius: Radios.boton,
+    marginBottom: Espaciado.xs,
+    gap: Espaciado.sm,
+  },
+  opcionFiltroActiva: {
+    backgroundColor: Colores.primario,
+  },
+  textoOpcionFiltro: {
+    fontFamily: 'Inter_500Medium',
+    fontSize: 15,
+    color: Colores.sobreSuperficie,
+  },
+  textoOpcionFiltroActiva: {
+    color: Colores.blanco,
+  },
+  botonCerrarModal: {
+    alignItems: 'center',
+    padding: Espaciado.md,
+    marginTop: Espaciado.sm,
+  },
+  textoBotonCerrarModal: {
+    fontFamily: 'Inter_600SemiBold',
+    color: Colores.primario,
+    fontSize: 15,
   },
 });

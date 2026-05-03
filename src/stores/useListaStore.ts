@@ -16,6 +16,9 @@ import {
   unirseALista,
   obtenerMisListas,
   obtenerTareasLista,
+  editarLista,
+  eliminarLista,
+  abandonarLista,
 } from '../services/listas.servicio';
 import { useAuthStore } from './useAuthStore';
 import type { Lista } from '../services/listas.servicio';
@@ -49,6 +52,10 @@ interface EstadoListas {
 
   /** Une al usuario a una lista por código y la añade al estado */
   unirseAListaPorCodigo: (codigo: string) => Promise<Lista | null>;
+
+  editarListaStore: (id: string, nombre: string) => Promise<boolean>;
+  eliminarListaStore: (id: string) => Promise<boolean>;
+  abandonarListaStore: (id: string) => Promise<boolean>;
 
   /** Carga las tareas de una lista concreta */
   cargarTareasLista: (listaId: string) => Promise<void>;
@@ -131,6 +138,57 @@ export const useListaStore = create<EstadoListas>((set, get) => ({
     } catch (e: any) {
       set({ error: e.message ?? 'Error al unirse a la lista.', cargando: false });
       return null;
+    }
+  },
+
+  editarListaStore: async (id: string, nombre: string) => {
+    set({ cargando: true, error: null });
+    try {
+      await editarLista(id, nombre);
+      set((estado) => ({
+        listas: estado.listas.map((l) => (l.id === id ? { ...l, nombre } : l)),
+        cargando: false,
+      }));
+      return true;
+    } catch (e: any) {
+      set({ error: e.message ?? 'Error al editar la lista.', cargando: false });
+      return false;
+    }
+  },
+
+  eliminarListaStore: async (id: string) => {
+    set({ cargando: true, error: null });
+    try {
+      await eliminarLista(id);
+      set((estado) => ({
+        listas: estado.listas.filter((l) => l.id !== id),
+        listaActivaId: estado.listaActivaId === id ? null : estado.listaActivaId,
+        tareasLista: estado.listaActivaId === id ? [] : estado.tareasLista,
+        cargando: false,
+      }));
+      return true;
+    } catch (e: any) {
+      set({ error: e.message ?? 'Error al eliminar la lista.', cargando: false });
+      return false;
+    }
+  },
+
+  abandonarListaStore: async (id: string) => {
+    const userId = useAuthStore.getState().userId;
+    if (!userId) return false;
+    set({ cargando: true, error: null });
+    try {
+      await abandonarLista(id, userId);
+      set((estado) => ({
+        listas: estado.listas.filter((l) => l.id !== id),
+        listaActivaId: estado.listaActivaId === id ? null : estado.listaActivaId,
+        tareasLista: estado.listaActivaId === id ? [] : estado.tareasLista,
+        cargando: false,
+      }));
+      return true;
+    } catch (e: any) {
+      set({ error: e.message ?? 'Error al abandonar la lista.', cargando: false });
+      return false;
     }
   },
 

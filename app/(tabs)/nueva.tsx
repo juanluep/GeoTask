@@ -20,7 +20,7 @@
  * ============================================================
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -43,6 +43,7 @@ import { Boton } from '../../src/components/ui/Boton';
 import { SelectorCategoria } from '../../src/components/tarea/SelectorCategoria';
 import { SelectorRadio } from '../../src/components/tarea/SelectorRadio';
 import { BuscadorLugares } from '../../src/components/compartido/BuscadorLugares';
+import { useListaStore } from '../../src/stores/useListaStore';
 import { Colores, Espaciado, Radios } from '../../src/config/tema';
 import type { ResultadoBusquedaLugar } from '../../src/models/ubicacion.modelo';
 import type { Prioridad } from '../../src/models/tarea.modelo';
@@ -71,6 +72,7 @@ export default function PantallaNuevaTarea() {
   const actualizarTarea = useTareaStore((s) => s.actualizarTarea);
   const cargando = useTareaStore((s) => s.cargando);
   const { categorias, cargarCategorias } = useCategoriaStore();
+  const { listas } = useListaStore();
   const ubicacion = useUbicacion();
 
   // Si estamos en modo edición, obtenemos la tarea existente del store.
@@ -85,28 +87,68 @@ export default function PantallaNuevaTarea() {
   const [categoriaId, setCategoriaId] = useState<string | null>(null);
   const [radio, setRadio] = useState(500); // 500m por defecto
   const [prioridad, setPrioridad] = useState<Prioridad>('media');
+  const [listaSeleccionadaId, setListaSeleccionadaId] = useState<string | null>(null);
   const [errores, setErrores] = useState<Record<string, string>>({});
   // resetKey: al incrementar, fuerza que BuscadorLugares se desmonte y remonte,
   // limpiando su estado interno (texto del input de búsqueda).
   const [resetKey, setResetKey] = useState(0);
 
+  // Referencia mutables para acceder a params dentro del useFocusEffect sin ponerlo en dependencias
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
+
   // ── Reset al entrar en la pantalla (solo modo creación) ──────────────────
-  // useFocusEffect se ejecuta cada vez que esta pantalla recibe el foco.
-  // En los tabs, la pantalla no se desmonta al cambiar de pestaña, así que
-  // sin este reset los datos del formulario anterior quedarían visibles.
   useFocusEffect(
     useCallback(() => {
+      const p = paramsRef.current;
+      
       if (!modoEdicion) {
-        // Modo creación: limpiar todo para empezar desde cero
-        setTitulo('');
-        setDescripcion('');
-        setLugarSeleccionado(null);
-        setCategoriaId(null);
-        setRadio(500);
-        setPrioridad('media');
-        setErrores({});
-        // Incrementar la key fuerza el remontaje de BuscadorLugares
-        setResetKey((k) => k + 1);
+        // Si venimos del mapa con coordenadas pre-rellenadas (long press en POI)
+        if (p.lat && p.lon) {
+          const nombreLugar = typeof p.nombre === 'string' ? p.nombre : 'Ubicación seleccionada';
+          setLugarSeleccionado({
+            osmId: typeof p.osmId === 'string' ? p.osmId : '',
+            nombre: nombreLugar,
+            direccionCompleta: typeof p.direccion === 'string' ? p.direccion : `${p.lat}, ${p.lon}`,
+            componentes: {},
+            coordenadas: {
+              latitud: parseFloat(p.lat as string),
+              longitud: parseFloat(p.lon as string),
+            },
+          });
+          
+          if (nombreLugar !== 'Ubicación seleccionada') {
+            setTitulo(nombreLugar);
+          } else {
+            setTitulo('');
+          }
+          
+          setDescripcion('');
+          setCategoriaId(null);
+          setRadio(500);
+          setPrioridad('media');
+          setListaSeleccionadaId(null);
+          setErrores({});
+          setResetKey((k) => k + 1);
+          
+          // Limpiar los params usando setTimeout para evitar colisiones en el ciclo de renderizado.
+          // Como params no está en las dependencias de useCallback, esto no causará un bucle infinito ni relanzará el useFocusEffect.
+          setTimeout(() => {
+            enrutador.setParams({ lat: '', lon: '', nombre: '', direccion: '', osmId: '' });
+          }, 0);
+          
+        } else {
+          // Modo creación normal (vía tab bar o botón de añadir puro)
+          setTitulo('');
+          setDescripcion('');
+          setLugarSeleccionado(null);
+          setCategoriaId(null);
+          setRadio(500);
+          setPrioridad('media');
+          setListaSeleccionadaId(null);
+          setErrores({});
+          setResetKey((k) => k + 1);
+        }
       }
     }, [modoEdicion])
   );
@@ -115,19 +157,6 @@ export default function PantallaNuevaTarea() {
     // Cargamos categorías al montar (si no están ya cargadas)
     if (categorias.length === 0) {
       cargarCategorias();
-    }
-    // Si venimos del mapa con coordenadas pre-rellenadas, montamos el lugar
-    if (!modoEdicion && params.lat && params.lon) {
-      setLugarSeleccionado({
-        osmId: params.osmId ?? '',
-        nombre: params.nombre ?? 'Ubicación seleccionada',
-        direccionCompleta: params.direccion ?? `${params.lat}, ${params.lon}`,
-        componentes: {},
-        coordenadas: {
-          latitud: parseFloat(params.lat),
-          longitud: parseFloat(params.lon),
-        },
-      });
     }
   }, []);
 
@@ -141,6 +170,7 @@ export default function PantallaNuevaTarea() {
       setCategoriaId(tareaAEditar.categoriaId);
       setRadio(tareaAEditar.radioProximidad);
       setPrioridad(tareaAEditar.prioridad);
+      setListaSeleccionadaId(tareaAEditar.listaId ?? null);
       // Reconstruimos un ResultadoBusquedaLugar con los datos de la tarea
       setLugarSeleccionado({
         osmId: tareaAEditar.osmId ?? '',
@@ -206,6 +236,7 @@ export default function PantallaNuevaTarea() {
         osmId: lugarSeleccionado.osmId,
         radioProximidad: radio,
         prioridad,
+        listaId: listaSeleccionadaId ?? undefined,
       });
       // Volver a la pantalla de detalle de la tarea actualizada
       enrutador.back();
@@ -223,6 +254,7 @@ export default function PantallaNuevaTarea() {
         radioProximidad: radio,
         geocercaActiva: true,
         prioridad,
+        listaId: listaSeleccionadaId ?? undefined,
       });
 
       if (id) {
@@ -291,8 +323,8 @@ export default function PantallaNuevaTarea() {
               }}
               alLimpiar={() => setLugarSeleccionado(null)}
               valorInicial={lugarSeleccionado?.nombre}
-              latitud={ubicacion.coordenadas?.latitud}
-              longitud={ubicacion.coordenadas?.longitud}
+              latitud={lugarSeleccionado?.coordenadas.latitud ?? ubicacion.coordenadas?.latitud}
+              longitud={lugarSeleccionado?.coordenadas.longitud ?? ubicacion.coordenadas?.longitud}
             />
             {errores.lugar ? (
               <Text style={estilos.textoError}>{errores.lugar}</Text>
@@ -321,6 +353,30 @@ export default function PantallaNuevaTarea() {
               <Text style={estilos.textoError}>{errores.categoria}</Text>
             )}
           </View>
+
+          {/* 4.5. Lista Compartida */}
+          {listas.length > 0 && (
+            <View style={estilos.campo}>
+              <Text style={estilos.etiquetaCampo}>Lista (Opcional)</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 4 }}>
+                <TouchableOpacity
+                  onPress={() => setListaSeleccionadaId(null)}
+                  style={[estilos.chipPrioridad, { paddingHorizontal: 16 }, listaSeleccionadaId === null && { backgroundColor: Colores.primario + '15', borderColor: Colores.primario }]}
+                >
+                  <Text style={[estilos.textoChipPrioridad, listaSeleccionadaId === null && { color: Colores.primario, fontFamily: 'Inter_600SemiBold' }]}>Personal</Text>
+                </TouchableOpacity>
+                {listas.map((l) => (
+                  <TouchableOpacity
+                    key={l.id}
+                    onPress={() => setListaSeleccionadaId(l.id)}
+                    style={[estilos.chipPrioridad, { paddingHorizontal: 16 }, listaSeleccionadaId === l.id && { backgroundColor: Colores.primario + '15', borderColor: Colores.primario }]}
+                  >
+                    <Text style={[estilos.textoChipPrioridad, listaSeleccionadaId === l.id && { color: Colores.primario, fontFamily: 'Inter_600SemiBold' }]}>{l.nombre}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
 
           {/* 5. Radio de geocerca */}
           <View style={estilos.campo}>

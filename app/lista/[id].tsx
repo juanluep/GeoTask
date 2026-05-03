@@ -11,7 +11,7 @@
  * ============================================================
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -20,11 +20,17 @@ import {
   StyleSheet,
   ActivityIndicator,
   Share,
+  Alert,
+  Modal,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useListaStore } from '../../src/stores/useListaStore';
 import { suscribirseACambiosLista } from '../../src/services/listas.servicio';
+import { Boton } from '../../src/components/ui/Boton';
+import { EntradaTexto } from '../../src/components/ui/EntradaTexto';
+import { compartirLista } from '../../src/services/compartir.servicio';
 import type { Tarea } from '../../src/models/tarea.modelo';
 
 export default function PantallaLista() {
@@ -39,9 +45,15 @@ export default function PantallaLista() {
     cargarTareasLista,
     actualizarTareaEnLista,
     eliminarTareaEnLista,
+    editarListaStore,
+    eliminarListaStore,
+    abandonarListaStore,
   } = useListaStore();
 
   const lista = listas.find((l) => l.id === id);
+
+  const [modalEdicion, setModalEdicion] = useState(false);
+  const [nuevoNombre, setNuevoNombre] = useState(lista?.nombre ?? '');
 
   // Cargar tareas al entrar y suscribirse a Realtime
   useFocusEffect(
@@ -70,9 +82,33 @@ export default function PantallaLista() {
 
   async function compartirCodigo() {
     if (!lista) return;
-    await Share.share({
-      message: `Únete a mi lista "${lista.nombre}" en GeoTask con el código: ${lista.codigo.toUpperCase()}`,
-    });
+    await compartirLista(lista);
+  }
+
+  function guardarEdicion() {
+    if (!nuevoNombre.trim()) return;
+    editarListaStore(id, nuevoNombre.trim());
+    setModalEdicion(false);
+  }
+
+  function solicitarEliminar() {
+    Alert.alert('Eliminar lista', '¿Seguro que quieres eliminar esta lista para todos los miembros? Esta acción no se puede deshacer.', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Eliminar', style: 'destructive', onPress: async () => {
+          const exito = await eliminarListaStore(id);
+          if (exito) enrutador.back();
+      } }
+    ]);
+  }
+
+  function solicitarAbandonar() {
+    Alert.alert('Abandonar lista', '¿Seguro que quieres salir de esta lista? Dejarás de ver sus tareas.', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Abandonar', style: 'destructive', onPress: async () => {
+          const exito = await abandonarListaStore(id);
+          if (exito) enrutador.back();
+      } }
+    ]);
   }
 
   function renderizarTarea({ item }: { item: Tarea }) {
@@ -116,12 +152,50 @@ export default function PantallaLista() {
       {/* Código de la lista */}
       {lista && (
         <View style={estilos.bannerCodigo}>
-          <Text style={estilos.textoCodigo}>
-            Código: <Text style={estilos.codigo}>{lista.codigo.toUpperCase()}</Text>
-          </Text>
-          <Text style={estilos.rolTexto}>Tu rol: {lista.rol ?? 'editor'}</Text>
+          <View>
+            <Text style={estilos.textoCodigo}>
+              Código: <Text style={estilos.codigo}>{lista.codigo.toUpperCase()}</Text>
+            </Text>
+            <Text style={estilos.rolTexto}>Tu rol: {lista.rol ?? 'editor'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 16 }}>
+            {lista.rol === 'admin' ? (
+              <>
+                <TouchableOpacity onPress={() => { setNuevoNombre(lista.nombre); setModalEdicion(true); }}>
+                  <Ionicons name="pencil" size={22} color="#3b82f6" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={solicitarEliminar}>
+                  <Ionicons name="trash" size={22} color="#ef4444" />
+                </TouchableOpacity>
+              </>
+            ) : (
+              <TouchableOpacity onPress={solicitarAbandonar}>
+                <Ionicons name="exit-outline" size={24} color="#ef4444" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       )}
+
+      {/* Modal de edición */}
+      <Modal visible={modalEdicion} transparent animationType="fade">
+        <View style={estilos.modalOverlay}>
+          <View style={estilos.modalBox}>
+            <Text style={estilos.modalTitulo}>Renombrar lista</Text>
+            <EntradaTexto
+              marcador="Nombre de la lista"
+              valor={nuevoNombre}
+              alCambiar={setNuevoNombre}
+            />
+            <View style={estilos.modalAcciones}>
+              <TouchableOpacity onPress={() => setModalEdicion(false)} style={estilos.modalBotonCancelar}>
+                <Text style={estilos.modalTextoCancelar}>Cancelar</Text>
+              </TouchableOpacity>
+              <Boton etiqueta="Guardar" alPresionar={guardarEdicion} variante="primario" />
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Lista de tareas */}
       {cargando ? (
@@ -297,5 +371,36 @@ const estilos = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: '#6b7280',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalBox: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    gap: 16,
+  },
+  modalTitulo: {
+    fontSize: 18,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#111827',
+  },
+  modalAcciones: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalBotonCancelar: {
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  modalTextoCancelar: {
+    color: '#6b7280',
+    fontFamily: 'Inter_500Medium',
   },
 });

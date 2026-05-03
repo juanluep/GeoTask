@@ -36,6 +36,7 @@ import { useCategoriaStore } from '../../src/stores/useCategoriaStore';
 import { Boton } from '../../src/components/ui/Boton';
 import { Indicador } from '../../src/components/ui/Indicador';
 import { Colores, Espaciado, Radios, Sombras } from '../../src/config/tema';
+import { compartirTarea as lanzarCompartirTarea } from '../../src/services/compartir.servicio';
 
 
 export default function PantallaDetalleTarea() {
@@ -79,6 +80,7 @@ export default function PantallaDetalleTarea() {
 
   // ── Confirmar completar ──────────────────────
   function confirmarCompletar() {
+    if (!tarea) return;
     Alert.alert(
       '¿Tarea completada?',
       `"${tarea.titulo}" se moverá al historial.`,
@@ -95,25 +97,14 @@ export default function PantallaDetalleTarea() {
     );
   }
 
-  // ── Compartir tarea ──────────────────────────
   async function compartirTarea() {
-    // Share.share() abre la hoja de compartir nativa del sistema operativo.
-    // En Android muestra un intent chooser; en iOS el share sheet de Apple.
-    const lugar = tarea.nombreLugar || tarea.direccion;
-    const prioridadTexto = { alta: '🔴 Alta', media: '🟡 Media', baja: '🟢 Baja' }[tarea.prioridad];
-    await Share.share({
-      title: tarea.titulo,
-      message:
-        `📋 ${tarea.titulo}\n` +
-        `📍 ${lugar}\n` +
-        `${tarea.descripcion ? `📝 ${tarea.descripcion}\n` : ''}` +
-        `${prioridadTexto} · Radio: ${tarea.radioProximidad >= 1000 ? `${tarea.radioProximidad / 1000} km` : `${tarea.radioProximidad} m`}\n\n` +
-        `Compartido desde GeoTask`,
-    }).catch(() => {});
+    if (!tarea) return;
+    await lanzarCompartirTarea(tarea);
   }
 
   // ── Navegar a editar ─────────────────────────
   function navegarAEditar() {
+    if (!tarea) return;
     // Navegamos a la pantalla "Nueva tarea" en modo edición pasando el ID.
     // Esa pantalla detecta el parámetro editarId y pre-rellena el formulario.
     enrutador.push({
@@ -124,6 +115,7 @@ export default function PantallaDetalleTarea() {
 
   // ── Confirmar eliminar ───────────────────────
   function confirmarEliminar() {
+    if (!tarea) return;
     Alert.alert(
       'Eliminar tarea',
       `¿Seguro que quieres eliminar "${tarea.titulo}"? Esta acción no se puede deshacer.`,
@@ -144,6 +136,7 @@ export default function PantallaDetalleTarea() {
   }
 
   const colorPrioridad =
+    !tarea ? Colores.exito :
     tarea.prioridad === 'alta'
       ? Colores.error
       : tarea.prioridad === 'media'

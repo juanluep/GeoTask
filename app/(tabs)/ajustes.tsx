@@ -21,6 +21,8 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  Linking,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -40,6 +42,13 @@ import {
 import { obtenerEstadisticas, obtenerTareas, type Estadisticas } from '../../src/services/basedatos.servicio';
 import { obtenerPerfil } from '../../src/services/perfil.servicio';
 import type { PerfilUsuario } from '../../src/models/usuario.modelo';
+import { 
+  obtenerEstadoGeocercas, 
+  obtenerDebugLogs, 
+  limpiarDebugLogs,
+  registrarTodasLasGeocercas 
+} from '../../src/services/geocerca.servicio';
+import { enviarNotificacionPrueba } from '../../src/services/notificacion.servicio';
 
 const MODOS_TRANSPORTE: { valor: ModoTransporte; icono: keyof typeof Ionicons.glyphMap; etiqueta: string }[] = [
   { valor: 'automatico', icono: 'phone-portrait-outline', etiqueta: 'Auto' },
@@ -56,6 +65,11 @@ export default function PantallaAjustes() {
   const [estadisticas, setEstadisticas] = useState<Estadisticas | null>(null);
   const [exportando, setExportando] = useState(false);
   const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
+  
+  // Estado para diagnóstico
+  const [estadoGeocercas, setEstadoGeocercas] = useState<{ activo: boolean; registradas: number; permisoBackground: string } | null>(null);
+  const [debugLogs, setDebugLogs] = useState<{t: string, m: string}[]>([]);
+  const [mostrandoLogs, setMostrandoLogs] = useState(false);
 
   useEffect(() => {
     cargarConfiguracion();
@@ -66,22 +80,28 @@ export default function PantallaAjustes() {
     }
   }, [sesion?.user?.id]);
 
-  // Recargar estadísticas cada vez que el usuario vuelve a esta pestaña,
-  // para que el contador de pendientes refleje las tareas creadas/completadas recientemente.
-  useFocusEffect(useCallback(() => {
-    cargarEstadisticas();
-  }, [cargarEstadisticas]));
-
   const cargarEstadisticas = useCallback(async () => {
     try {
       const stats = await obtenerEstadisticas();
       setEstadisticas(stats);
+      
+      // También cargar estado de geocercas
+      const estado = await obtenerEstadoGeocercas();
+      setEstadoGeocercas(estado);
+      const logs = await obtenerDebugLogs();
+      setDebugLogs(logs);
     } catch (error) {
       console.warn('[ajustes] Error cargando estadísticas:', error);
       // Mostrar ceros en lugar de spinner infinito si falla la consulta
       setEstadisticas({ totalCompletadas: 0, completadasEsteMes: 0, pendientes: 0, categoriaMasUsada: null });
     }
   }, []);
+
+  // Recargar estadísticas cada vez que el usuario vuelve a esta pestaña,
+  // para que el contador de pendientes refleje las tareas creadas/completadas recientemente.
+  useFocusEffect(useCallback(() => {
+    cargarEstadisticas();
+  }, [cargarEstadisticas]));
 
   // ── Cerrar sesión ─────────────────────────────
   const handleCerrarSesion = useCallback(() => {
@@ -457,6 +477,129 @@ export default function PantallaAjustes() {
           />
         </View>
 
+        {/* ── Diagnóstico de Geocercas (Nuevo) ── */}
+        <Text style={[estilos.tituloSeccion, { marginTop: Espaciado.xl }]}>Diagnóstico del sistema</Text>
+        <View style={estilos.tarjeta}>
+          <View style={estilos.filaAccion}>
+            <Ionicons 
+              name={estadoGeocercas?.activo ? "radio-outline" : "alert-circle-outline"} 
+              size={20} 
+              color={estadoGeocercas?.activo ? Colores.exito : Colores.error} 
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={estilos.etiquetaAjuste}>Estado del monitor</Text>
+              <Text style={[estilos.subtextoAjuste, { color: estadoGeocercas?.activo ? Colores.exito : Colores.error }]}>
+                {estadoGeocercas?.activo ? `Activo (${estadoGeocercas.registradas} geocercas)` : 'Inactivo (no se detectarán llegadas)'}
+              </Text>
+            </View>
+            <TouchableOpacity 
+              style={estilos.botonPequeno} 
+              onPress={async () => {
+                await registrarTodasLasGeocercas();
+                const nuevoEstado = await obtenerEstadoGeocercas();
+                setEstadoGeocercas(nuevoEstado);
+                Alert.alert('Reiniciado', 'Se ha intentado reiniciar el monitor de geocercas.');
+              }}
+            >
+              <Text style={estilos.textoBotonPequeno}>Reiniciar</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Separador />
+
+          <View style={estilos.filaAccion}>
+            <Ionicons 
+              name="location-outline" 
+              size={20} 
+              color={estadoGeocercas?.permisoBackground === 'granted' ? Colores.exito : Colores.alerta} 
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={estilos.etiquetaAjuste}>Permiso de segundo plano</Text>
+              <Text style={estilos.subtextoAjuste}>
+                {estadoGeocercas?.permisoBackground === 'granted' 
+                  ? 'Concedido (Permitir siempre)' 
+                  : 'No configurado correctamente'}
+              </Text>
+            </View>
+          </View>
+
+          <Separador />
+
+          {/* Guía de optimización de batería — causa más frecuente de fallos */}
+          {Platform.OS === 'android' && (
+            <TouchableOpacity
+              style={estilos.filaAccion}
+              activeOpacity={0.75}
+              onPress={() => {
+                Alert.alert(
+                  'Optimización de batería',
+                  'Android puede suspender las geocercas para ahorrar batería.\n\n' +
+                  '1. Pulsa "Abrir Ajustes"\n' +
+                  '2. Ve a Batería (o Uso de batería)\n' +
+                  '3. Busca GeoTask y selecciona "Sin restricciones" o "No optimizar"\n\n' +
+                  'En móviles Samsung: Ajustes → Batería → Optimización de batería → Todas las apps → GeoTask → No optimizar',
+                  [
+                    { text: 'Cancelar', style: 'cancel' },
+                    { text: 'Abrir Ajustes', onPress: () => Linking.openSettings() },
+                  ]
+                );
+              }}
+            >
+              <Ionicons name="battery-charging-outline" size={20} color={Colores.alerta} />
+              <View style={{ flex: 1 }}>
+                <Text style={estilos.etiquetaAjuste}>Optimización de batería</Text>
+                <Text style={estilos.subtextoAjuste}>
+                  Si las geocercas no funcionan, desactiva la optimización para esta app
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colores.sobreSuperficieVariante} />
+            </TouchableOpacity>
+          )}
+
+          {Platform.OS === 'android' && <Separador />}
+
+          <View style={estilos.filaBotonesDebug}>
+            <TouchableOpacity
+              style={estilos.botonAccionDebug}
+              onPress={() => enviarNotificacionPrueba()}
+            >
+              <Ionicons name="notifications-outline" size={16} color={Colores.primario} />
+              <Text style={estilos.textoBotonAccionDebug}>Probar Aviso</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={estilos.botonAccionDebug}
+              onPress={() => setMostrandoLogs(!mostrandoLogs)}
+            >
+              <Ionicons name="list-outline" size={16} color={Colores.primario} />
+              <Text style={estilos.textoBotonAccionDebug}>{mostrandoLogs ? 'Ocultar Logs' : 'Ver Logs'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {mostrandoLogs && (
+            <View style={estilos.contenedorLogs}>
+              {debugLogs.length > 0 ? (
+                debugLogs.map((log, i) => (
+                  <Text key={i} style={estilos.textoLog}>
+                    [{log.t.split('T')[1].split('.')[0]}] {log.m}
+                  </Text>
+                ))
+              ) : (
+                <Text style={estilos.textoLog}>No hay eventos registrados recientemente.</Text>
+              )}
+              <TouchableOpacity 
+                style={{ marginTop: 8 }} 
+                onPress={async () => {
+                  await limpiarDebugLogs();
+                  setDebugLogs([]);
+                }}
+              >
+                <Text style={[estilos.textoLog, { color: Colores.error, textAlign: 'right' }]}>Limpiar historial</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         {/* ── Acerca de / Tutorial ── */}
         <Text style={[estilos.tituloSeccion, { marginTop: Espaciado.xl }]}>Acerca de</Text>
         <View style={estilos.tarjeta}>
@@ -596,5 +739,50 @@ const estilos = StyleSheet.create({
   textoBannerInvitado: {
     flex: 1, fontFamily: 'Inter_400Regular', fontSize: 13,
     color: Colores.primario, lineHeight: 18,
+  },
+  // Diagnóstico
+  botonPequeno: {
+    backgroundColor: Colores.superficieContenedorAlta,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  textoBotonPequeno: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+    color: Colores.sobreSuperficie,
+  },
+  filaBotonesDebug: {
+    flexDirection: 'row',
+    gap: Espaciado.sm,
+    marginTop: 4,
+  },
+  botonAccionDebug: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colores.primarioContenedor,
+  },
+  textoBotonAccionDebug: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+    color: Colores.primario,
+  },
+  contenedorLogs: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+  },
+  textoLog: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    color: '#475569',
+    marginBottom: 2,
   },
 });

@@ -9,9 +9,9 @@
     "newArchEnabled": true,
     "scheme": "geotask",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#4648d4"
+      "backgroundColor": "#1d4ed8"
     },
     "ios": {
       "supportsTablet": false,
@@ -22,13 +22,18 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "GeoTask necesita tu ubicación en segundo plano para el sistema de geocercas.",
         "NSCalendarsUsageDescription": "GeoTask puede añadir tus tareas con fecha límite al calendario del dispositivo.",
         "NSPhotoLibraryUsageDescription": "GeoTask puede adjuntar fotos de tu galería a las tareas.",
-        "NSCameraUsageDescription": "GeoTask puede tomar fotos para adjuntar a tus tareas."
+        "NSCameraUsageDescription": "GeoTask puede tomar fotos para adjuntar a tus tareas.",
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ],
+        "associatedDomains": ["applinks:geotask.chanlu.es"]
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#4648d4"
+        "backgroundColor": "#1d4ed8"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.chanlusoft.geotask",
@@ -36,14 +41,37 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
         "SCHEDULE_EXACT_ALARM",
         "READ_CALENDAR",
         "WRITE_CALENDAR",
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "WRITE_EXTERNAL_STORAGE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "geotask.chanlu.es",
+              "pathPrefix": "/task"
+            },
+            {
+              "scheme": "https",
+              "host": "geotask.chanlu.es",
+              "pathPrefix": "/join"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "web": {
@@ -56,14 +84,16 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "GeoTask necesita tu ubicación para el sistema de geocercas."
+          "locationAlwaysAndWhenInUsePermission": "GeoTask necesita tu ubicación para el sistema de geocercas.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       [
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#4648d4"
+          "color": "#1d4ed8"
         }
       ],
       "expo-web-browser"

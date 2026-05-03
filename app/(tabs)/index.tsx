@@ -121,86 +121,88 @@ export default function PantallaInicio() {
         </TouchableOpacity>
       </View>
 
-      {/* Chips de filtro por categoría (solo cuando no hay lista activa) */}
-      {!listaActivaId && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={estilos.contenedorChipsFiltro}
-          style={{ maxHeight: 52, marginTop: Espaciado.sm }}
-        >
-          {/* Chip "Todas" */}
-          <TouchableOpacity
-            style={[estilos.chipFiltro, !filtroCategoria && estilos.chipFiltroActivo]}
-            onPress={() => cambiarFiltroCategoria(null)}
+      {/* Contenedor de Filtros (Altura estable) */}
+      <View style={estilos.seccionFiltros}>
+        {!listaActivaId && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={estilos.contenedorChipsFiltro}
+            style={{ marginTop: Espaciado.sm }}
           >
-            <Text style={[estilos.textoChipFiltro, !filtroCategoria && estilos.textoChipFiltroActivo]}>
-              Todas
-            </Text>
-          </TouchableOpacity>
+            {/* Chip "Todas" */}
+            <TouchableOpacity
+              style={[estilos.chipFiltro, !filtroCategoria && estilos.chipFiltroActivo]}
+              onPress={() => cambiarFiltroCategoria(null)}
+            >
+              <Text style={[estilos.textoChipFiltro, !filtroCategoria && estilos.textoChipFiltroActivo]}>
+                Todas
+              </Text>
+            </TouchableOpacity>
 
-          {/* Chips de categorías */}
-          {categorias.map((cat) => {
-            const activa = filtroCategoria === cat.id;
-            return (
-              <TouchableOpacity
-                key={cat.id}
-                style={[estilos.chipFiltro, activa && { backgroundColor: cat.color, borderColor: cat.color }]}
-                onPress={() => cambiarFiltroCategoria(activa ? null : cat.id)}
-              >
-                <Text style={[estilos.textoChipFiltro, activa && { color: Colores.blanco }]}>
-                  {cat.nombre}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      )}
+            {/* Chips de categorías */}
+            {categorias.map((cat) => {
+              const activa = filtroCategoria === cat.id;
+              return (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[estilos.chipFiltro, activa && { backgroundColor: cat.color, borderColor: cat.color }]}
+                  onPress={() => cambiarFiltroCategoria(activa ? null : cat.id)}
+                >
+                  <Text style={[estilos.textoChipFiltro, activa && { color: Colores.blanco }]}>
+                    {cat.nombre}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
 
-      {/* Chips de filtro por lista compartida */}
-      {listas.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={estilos.contenedorChipsFiltro}
-          style={{ maxHeight: 52, marginTop: Espaciado.xs }}
-        >
-          {/* Chip "Mis tareas" */}
-          <TouchableOpacity
-            style={[estilos.chipLista, !listaActivaId && estilos.chipListaActivo]}
-            onPress={() => activarLista(null)}
+        {/* Chips de filtro por lista compartida */}
+        {listas.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={estilos.contenedorChipsFiltro}
+            style={{ marginTop: Espaciado.xs }}
           >
-            <Ionicons
-              name="person-outline"
-              size={12}
-              color={!listaActivaId ? Colores.blanco : Colores.sobreSuperficieVariante}
-            />
-            <Text style={[estilos.textoChipLista, !listaActivaId && estilos.textoChipListaActivo]}>
-              Mis tareas
-            </Text>
-          </TouchableOpacity>
+            {/* Chip "Mis tareas" */}
+            <TouchableOpacity
+              style={[estilos.chipLista, !listaActivaId && estilos.chipListaActivo]}
+              onPress={() => activarLista(null)}
+            >
+              <Ionicons
+                name="person-outline"
+                size={12}
+                color={!listaActivaId ? Colores.blanco : Colores.sobreSuperficieVariante}
+              />
+              <Text style={[estilos.textoChipLista, !listaActivaId && estilos.textoChipListaActivo]}>
+                Mis tareas
+              </Text>
+            </TouchableOpacity>
 
-          {listas.map((lista) => {
-            const activa = listaActivaId === lista.id;
-            return (
-              <TouchableOpacity
-                key={lista.id}
-                style={[estilos.chipLista, activa && estilos.chipListaActivo]}
-                onPress={() => activarLista(activa ? null : lista.id)}
-              >
-                <Ionicons
-                  name="people-outline"
-                  size={12}
-                  color={activa ? Colores.blanco : Colores.sobreSuperficieVariante}
-                />
-                <Text style={[estilos.textoChipLista, activa && estilos.textoChipListaActivo]}>
-                  {lista.nombre}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      )}
+            {listas.map((lista) => {
+              const activa = listaActivaId === lista.id;
+              return (
+                <TouchableOpacity
+                  key={lista.id}
+                  style={[estilos.chipLista, activa && estilos.chipListaActivo]}
+                  onPress={() => activarLista(activa ? null : lista.id)}
+                >
+                  <Ionicons
+                    name="people-outline"
+                    size={12}
+                    color={activa ? Colores.blanco : Colores.sobreSuperficieVariante}
+                  />
+                  <Text style={[estilos.textoChipLista, activa && estilos.textoChipListaActivo]}>
+                    {lista.nombre}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
+      </View>
 
       {/* Lista de tareas */}
       {cargando && tareasActuales.length === 0 ? (
@@ -353,19 +355,26 @@ const estilos = StyleSheet.create({
     borderRadius: Radios.completo,
   },
   textoNuevaRapida: { fontFamily: 'Inter_600SemiBold', fontSize: 13, color: Colores.primario },
-  // Chips filtro
+  // Filtros
+  seccionFiltros: {
+    minHeight: 100, // Garantiza que el espacio sea fijo aunque falte una fila
+    justifyContent: 'center',
+  },
   contenedorChipsFiltro: {
     paddingHorizontal: Espaciado.base,
+    paddingVertical: Espaciado.xs,
     gap: Espaciado.sm,
+    flexDirection: 'row',
     alignItems: 'center',
   },
   chipFiltro: {
     paddingHorizontal: Espaciado.base,
-    paddingVertical: Espaciado.sm,
+    paddingVertical: 8,
     borderRadius: Radios.completo,
     backgroundColor: Colores.blanco,
     borderWidth: 1,
     borderColor: Colores.superficieContenedorAlta,
+    justifyContent: 'center',
   },
   chipFiltroActivo: { backgroundColor: Colores.primario, borderColor: Colores.primario },
   textoChipFiltro: { fontFamily: 'Inter_500Medium', fontSize: 13, color: Colores.sobreSuperficieVariante },
@@ -376,11 +385,12 @@ const estilos = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: Espaciado.base,
-    paddingVertical: Espaciado.sm,
+    paddingVertical: 8,
     borderRadius: Radios.completo,
     backgroundColor: Colores.blanco,
     borderWidth: 1,
     borderColor: '#dbeafe',
+    justifyContent: 'center',
   },
   chipListaActivo: { backgroundColor: '#1d4ed8', borderColor: '#1d4ed8' },
   textoChipLista: { fontFamily: 'Inter_500Medium', fontSize: 12, color: Colores.sobreSuperficieVariante },

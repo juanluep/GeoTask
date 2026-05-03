@@ -26,6 +26,7 @@
 
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import * as SecureStore from 'expo-secure-store';
 import { obtenerTareas, leerConfiguracion } from './basedatos.servicio';
 import { enviarNotificacionProximidad } from './notificacion.servicio';
 import { obtenerHorario } from './horarios.servicio';
@@ -60,48 +61,49 @@ const MAX_GEOCERCAS = 20;
 TaskManager.defineTask(NOMBRE_TAREA_GEOCERCA, async ({ data, error }: any) => {
   if (error) {
     console.error('[geocerca] Error en tarea background:', error.message);
+    await registrarDebugLog(`Error en tarea: ${error.message}`);
     return;
   }
 
-  // data.eventType indica si es entrada (ENTER) o salida (EXIT) de la geocerca
   const { eventType, region } = data;
+  const tipoEvento = eventType === Location.GeofencingEventType.Enter ? 'ENTRADA' : 'SALIDA';
+  
+  console.log(`[geocerca] Evento ${tipoEvento} detectado en región: ${region.identifier}`);
+  await registrarDebugLog(`Evento ${tipoEvento}: ${region.identifier}`);
 
   // Solo procesamos ENTRADAS, no salidas
   if (eventType !== Location.GeofencingEventType.Enter) return;
 
-  console.log(`[geocerca] Entrada detectada en región: ${region.identifier}`);
-
   try {
-    // Buscamos la tarea cuyo ID coincide con el identificador de la región
-    // (Al registrar la geocerca, usamos el ID de la tarea como identifier)
     const tareasPendientes = await obtenerTareas(false);
     const tarea = tareasPendientes.find((t) => t.id === region.identifier);
 
     if (!tarea) {
       console.warn('[geocerca] No se encontró la tarea para la región:', region.identifier);
+      await registrarDebugLog(`Tarea no encontrada: ${region.identifier}`);
       return;
     }
 
-    // Solo notificar si la geocerca de la tarea está activa
-    if (!tarea.geocercaActiva) return;
+    if (!tarea.geocercaActiva) {
+      console.log(`[geocerca] Ignorando "${tarea.titulo}" — geocerca desactivada.`);
+      return;
+    }
 
-    // Si el usuario tiene activada la verificación de horarios,
-    // consultamos si el establecimiento está abierto antes de notificar.
-    // En background no tenemos acceso al store de Zustand, así que
-    // leemos la configuración directamente de SQLite.
     const verificarHorarios = await leerConfiguracion<boolean>('verificarHorarios');
     if (verificarHorarios && tarea.osmId) {
       const horario = await obtenerHorario(tarea.osmId, tarea.latitud, tarea.longitud);
       if (!horario.sinDatos && !horario.abierto) {
         console.log(`[geocerca] No se notifica "${tarea.titulo}" — establecimiento cerrado.`);
+        await registrarDebugLog(`Establecimiento cerrado: ${tarea.titulo}`);
         return;
       }
     }
 
-    // Enviar notificación (con verificación de cooldown interna)
     await enviarNotificacionProximidad(tarea);
+    await registrarDebugLog(`Notificación enviada: ${tarea.titulo}`);
   } catch (err) {
     console.error('[geocerca] Error al procesar entrada:', err);
+    await registrarDebugLog(`Error procesando entrada: ${err}`);
   }
 });
 
@@ -150,9 +152,14 @@ export async function registrarTodasLasGeocercas(): Promise<void> {
     // Iniciar geofencing. Si ya estaba activo, esto lo reemplaza.
     await Location.startGeofencingAsync(NOMBRE_TAREA_GEOCERCA, regiones);
 
-    console.log(`[geocerca] ${regiones.length} geocercas registradas.`);
+    const activo = await Location.hasStartedGeofencingAsync(NOMBRE_TAREA_GEOCERCA);
+    const resumen = `${regiones.length} geocercas — monitor ${activo ? 'ACTIVO' : 'INACTIVO'}`;
+    console.log(`[geocerca] ${resumen}`);
+    await registrarDebugLog(`Registro: ${resumen}`);
   } catch (error) {
-    console.error('[geocerca] Error al registrar geocercas:', error);
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[geocerca] Error al registrar geocercas:', msg);
+    await registrarDebugLog(`Error al registrar: ${msg}`);
   }
 }
 
@@ -176,10 +183,70 @@ export async function detenerGeofencing(): Promise<void> {
     if (activo) {
       await Location.stopGeofencingAsync(NOMBRE_TAREA_GEOCERCA);
       console.log('[geocerca] Geofencing detenido.');
+      await registrarDebugLog('Geofencing detenido manualmente');
     }
   } catch (error) {
     console.warn('[geocerca] Error al detener geofencing:', error);
   }
+}
+
+/**
+ * Obtiene el estado actual del sistema de geocercas para diagnóstico.
+ */
+export async function obtenerEstadoGeocercas(): Promise<{
+  activo: boolean;
+  registradas: number;
+  permisoBackground: string;
+}> {
+  const activo = await Location.hasStartedGeofencingAsync(NOMBRE_TAREA_GEOCERCA);
+  const { status } = await Location.getBackgroundPermissionsAsync();
+  const tareas = await obtenerTareas(false);
+  const registradas = tareas.filter(t => t.geocercaActiva).length;
+
+  return {
+    activo,
+    registradas: activo ? Math.min(registradas, MAX_GEOCERCAS) : 0,
+    permisoBackground: status
+  };
+}
+
+/**
+ * Registra un log de depuración en SecureStore para poder consultarlo desde la UI.
+ * Útil para ver qué pasó en background sin tener el cable conectado.
+ */
+async function registrarDebugLog(mensaje: string): Promise<void> {
+  try {
+    const logsPrevios = await SecureStore.getItemAsync('gt_debug_logs');
+    const logs = logsPrevios ? JSON.parse(logsPrevios) : [];
+    const nuevoLog = {
+      t: new Date().toISOString(),
+      m: mensaje
+    };
+    // Mantener solo los últimos 20 logs
+    const nuevosLogs = [nuevoLog, ...logs].slice(0, 20);
+    await SecureStore.setItemAsync('gt_debug_logs', JSON.stringify(nuevosLogs));
+  } catch {
+    // Ignorar errores de logging
+  }
+}
+
+/**
+ * Lee los logs de depuración acumulados.
+ */
+export async function obtenerDebugLogs(): Promise<{t: string, m: string}[]> {
+  try {
+    const logs = await SecureStore.getItemAsync('gt_debug_logs');
+    return logs ? JSON.parse(logs) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Limpia el historial de logs.
+ */
+export async function limpiarDebugLogs(): Promise<void> {
+  await SecureStore.deleteItemAsync('gt_debug_logs');
 }
 
 // ──────────────────────────────────────────────

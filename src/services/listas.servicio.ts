@@ -52,11 +52,15 @@ export async function crearLista(nombre: string, userId: string): Promise<Lista>
   if (error) throw new Error('No se pudo crear la lista: ' + error.message);
 
   // Añadir al creador como miembro 'admin' de la lista
-  await supabase.from('miembros_lista').insert({
+  const { error: errorMiembro } = await supabase.from('miembros_lista').insert({
     lista_id: data.id,
     user_id: userId,
     rol: 'admin',
   });
+
+  if (errorMiembro) {
+    console.error('[Supabase] Error al añadir miembro admin a la lista:', errorMiembro);
+  }
 
   return filaALista(data);
 }
@@ -105,20 +109,80 @@ export async function unirseALista(codigo: string, userId: string): Promise<List
  * Obtiene todas las listas en las que participa el usuario (como creador o miembro).
  */
 export async function obtenerMisListas(userId: string): Promise<Lista[]> {
-  // Buscamos las listas donde el usuario es miembro
-  const { data: membresias, error } = await supabase
+  // 1. Buscamos directamente las listas de las que el usuario es dueño (owner)
+  const { data: listasPropias, error: errorPropias } = await supabase
+    .from('listas')
+    .select('*')
+    .eq('owner_id', userId);
+
+  if (errorPropias) {
+    console.error('[Supabase] Error al buscar listas propias:', errorPropias);
+  }
+
+  // 2. Buscamos las listas donde el usuario es miembro invitado
+  const { data: membresias, error: errorMembresias } = await supabase
     .from('miembros_lista')
     .select('rol, listas(*)')
     .eq('user_id', userId);
 
-  if (error || !membresias) return [];
+  if (errorMembresias) {
+    console.error('[Supabase] Error al buscar membresías:', errorMembresias);
+  }
 
-  return membresias
-    .filter((m) => m.listas)
-    .map((m) => ({
-      ...filaALista(m.listas as any),
-      rol: m.rol as 'admin' | 'editor' | 'lector',
-    }));
+  const listasCombinadas: Lista[] = [];
+
+  // Añadimos primero las listas de las que es dueño (siempre como admin)
+  if (listasPropias) {
+    listasPropias.forEach((fila) => {
+      listasCombinadas.push({ ...filaALista(fila), rol: 'admin' });
+    });
+  }
+
+  // Añadimos las listas de las que es miembro (si no están ya en la lista)
+  if (membresias) {
+    membresias.forEach((m) => {
+      if (m.listas) {
+        const idLista = (m.listas as any).id;
+        const yaExiste = listasCombinadas.some((l) => l.id === idLista);
+        if (!yaExiste) {
+          listasCombinadas.push({
+            ...filaALista(m.listas as any),
+            rol: m.rol as 'admin' | 'editor' | 'lector',
+          });
+        }
+      }
+    });
+  }
+
+  console.log(`[Supabase] obtenerMisListas: recuperadas ${listasCombinadas.length} listas en total.`);
+  return listasCombinadas;
+}
+
+export async function editarLista(listaId: string, nombre: string): Promise<void> {
+  const { error } = await supabase
+    .from('listas')
+    .update({ nombre })
+    .eq('id', listaId);
+
+  if (error) throw new Error('No se pudo editar la lista: ' + error.message);
+}
+
+export async function eliminarLista(listaId: string): Promise<void> {
+  const { error } = await supabase
+    .from('listas')
+    .delete()
+    .eq('id', listaId);
+
+  if (error) throw new Error('No se pudo eliminar la lista: ' + error.message);
+}
+
+export async function abandonarLista(listaId: string, userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('miembros_lista')
+    .delete()
+    .match({ lista_id: listaId, user_id: userId });
+
+  if (error) throw new Error('No se pudo abandonar la lista: ' + error.message);
 }
 
 /**

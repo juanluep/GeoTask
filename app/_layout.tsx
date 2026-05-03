@@ -23,7 +23,8 @@
  * ============================================================
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
@@ -53,6 +54,9 @@ SplashScreen.preventAutoHideAsync();
 
 export default function LayoutRaiz() {
   const [appLista, setAppLista] = useState(false);
+  // Guardamos el estado anterior de AppState para detectar solo la transición
+  // background → active (no queremos sincronizar si la app ya estaba activa).
+  const estadoAppAnterior = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
     async function cargarRecursos() {
@@ -112,6 +116,47 @@ export default function LayoutRaiz() {
   useEffect(() => {
     const desuscribir = useAuthStore.getState().escucharCambiosSesion();
     return desuscribir;
+  }, []);
+
+  // Sincronizar cuando la app vuelve al primer plano.
+  //
+  // ¿Por qué es necesario esto?
+  // La sync inicial (arriba) ocurre una sola vez al arrancar. Si el usuario
+  // tiene dos dispositivos con la misma cuenta y crea una tarea en el dispositivo A,
+  // el dispositivo B no se entera hasta que se reinicia... a menos que hagamos
+  // esta sync adicional cada vez que B vuelve al primer plano.
+  //
+  // AppState.currentState puede ser:
+  //   'active'     → la app está en pantalla (primer plano)
+  //   'background' → la app está en segundo plano (minimizada)
+  //   'inactive'   → transición (solo en iOS, p.ej. al recibir una llamada)
+  useEffect(() => {
+    const suscripcion = AppState.addEventListener(
+      'change',
+      async (nuevoEstado: AppStateStatus) => {
+        // Solo actuamos cuando la app pasa de background/inactive → active
+        const vuelveAlPrimerPlano =
+          estadoAppAnterior.current !== 'active' && nuevoEstado === 'active';
+
+        estadoAppAnterior.current = nuevoEstado;
+
+        if (vuelveAlPrimerPlano) {
+          // Re-registrar geocercas siempre: Android puede haberlas eliminado
+          // mientras la app estaba en segundo plano (Doze mode, reinicio, etc.)
+          registrarTodasLasGeocercas().catch(() => {});
+
+          const userId = useAuthStore.getState().userId;
+          if (userId) {
+            sincronizarCompleto(userId)
+              .then(() => useTareaStore.getState().cargarTareas())
+              .catch(() => {});
+          }
+        }
+      }
+    );
+
+    // Al desmontar el layout (raramente ocurre), limpiamos la suscripción
+    return () => suscripcion.remove();
   }, []);
 
   // Mientras cargamos recursos, no renderizamos nada
