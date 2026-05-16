@@ -35,7 +35,7 @@ import {
   Inter_700Bold,
 } from '@expo-google-fonts/inter';
 import { StatusBar } from 'expo-status-bar';
-import { inicializarBaseDatos } from '../src/services/basedatos.servicio';
+import { inicializarBaseDatos, borrarDatosLocales } from '../src/services/basedatos.servicio';
 import { configurarNotificaciones, solicitarPermisoNotificaciones } from '../src/services/notificacion.servicio';
 import { registrarTodasLasGeocercas } from '../src/services/geocerca.servicio';
 import { inicializarTablaHorarios } from '../src/services/horarios.servicio';
@@ -89,12 +89,13 @@ export default function LayoutRaiz() {
         // sessionCargada sea true cuando index.tsx lee el store.
         await useAuthStore.getState().inicializarSesion();
 
-        // Si hay sesión activa, sincronizar tareas pendientes y descargar novedades.
-        // Se hace en segundo plano para no retrasar el arranque, pero cuando
-        // termina recargamos el store para que la UI refleje las tareas descargadas.
         const userId = useAuthStore.getState().userId;
+
         if (userId) {
-          console.log('[layout] Iniciando sincronización completa para userId:', userId);
+          // Si hay sesión activa, sincronizar tareas pendientes y descargar novedades.
+          // Se hace en segundo plano para no retrasar el arranque, pero cuando
+          // termina recargamos el store para que la UI refleje las tareas descargadas.
+          console.log('[layout] Sesión activa detectada. Iniciando sincronización para userId:', userId);
           sincronizarCompleto(userId)
             .then(() => {
               console.log('[layout] Sincronización completada. Recargando tareas...');
@@ -103,6 +104,21 @@ export default function LayoutRaiz() {
             .catch((err) => {
               console.warn('[layout] Error en sincronización o recarga de tareas:', err);
             });
+        } else {
+          // Si NO hay sesión activa, borramos cualquier dato residual que Android
+          // haya restaurado por autobackup. Esto garantiza que una instalación
+          // nueva (o tras cerrar sesión) nunca muestre tareas, geocercas ni listas
+          // de un usuario anterior.
+          console.log('[layout] Sin sesión activa. Borrando datos locales residuales...');
+          try {
+            await borrarDatosLocales();
+            // Volvemos a crear las tablas limpias para que la app funcione
+            // correctamente como "instalación nueva".
+            await inicializarBaseDatos();
+            console.log('[layout] Datos residuales borrados y BD reinicializada.');
+          } catch (e) {
+            console.warn('[layout] Error al limpiar datos residuales:', e);
+          }
         }
       } catch (error) {
         // En producción, aquí registraríamos el error en un servicio
@@ -146,8 +162,16 @@ export default function LayoutRaiz() {
         // 3. Ubicación en segundo plano (necesario SOLO para geocercas nativas del SO)
         const bg = await Location.requestBackgroundPermissionsAsync();
         if (bg.status === 'granted') {
-          await registrarTodasLasGeocercas();
-          console.log('[layout] Geocercas nativas registradas.');
+          // Solo registramos geocercas si el usuario está autenticado.
+          // Si no hay sesión, la BD ya fue limpiada en cargarRecursos,
+          // pero este doble chequeo evita cualquier registro accidental.
+          const uid = useAuthStore.getState().userId;
+          if (uid) {
+            await registrarTodasLasGeocercas();
+            console.log('[layout] Geocercas nativas registradas.');
+          } else {
+            console.log('[layout] Permiso background concedido pero sin sesión. No se registran geocercas.');
+          }
         } else {
           console.log('[layout] Permiso background denegado. Activo fallback useProximidad.');
         }
@@ -192,12 +216,13 @@ export default function LayoutRaiz() {
         estadoAppAnterior.current = nuevoEstado;
 
         if (vuelveAlPrimerPlano) {
-          // Re-registrar geocercas siempre: Android puede haberlas eliminado
-          // mientras la app estaba en segundo plano (Doze mode, reinicio, etc.)
-          registrarTodasLasGeocercas().catch(() => {});
-
           const userId = useAuthStore.getState().userId;
+
+          // Solo re-registrar geocercas si hay sesión activa.
+          // Si no hay sesión, la app debería estar en estado limpio
+          // (sin tareas locales) tras el borrado de datos al arrancar.
           if (userId) {
+            registrarTodasLasGeocercas().catch(() => {});
             sincronizarCompleto(userId)
               .then(() => useTareaStore.getState().cargarTareas())
               .catch((err) => console.warn('[layout] Error sync al volver a primer plano:', err));
