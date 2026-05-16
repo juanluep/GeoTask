@@ -127,24 +127,22 @@ TaskManager.defineTask(NOMBRE_TAREA_GEOCERCA, async ({ data, error }: any) => {
  * Estrategia: cancelar todo y re-registrar desde cero.
  * Es más simple y seguro que mantener un diff de cambios.
  */
+/** Flag para evitar spammear la consola con el mismo mensaje de permiso */
+let permisoAvisado = false;
+
 export async function registrarTodasLasGeocercas(): Promise<void> {
   try {
     // Verificar que tenemos permiso de ubicación en background.
-    // Si aún no lo tenemos, intentamos pedirlo directamente (auto-recuperación).
-    let { status } = await Location.getBackgroundPermissionsAsync();
+    const { status } = await Location.getBackgroundPermissionsAsync();
     if (status !== 'granted') {
-      try {
-        const respuesta = await Location.requestBackgroundPermissionsAsync();
-        status = respuesta.status;
-      } catch {
-        // Algunos dispositivos/entornos (ej. Expo Go) no soportan esta llamada
+      if (!permisoAvisado) {
+        console.log('[geocerca] Sin permiso de background location. No se registran geocercas (fallback useProximidad activo).');
+        permisoAvisado = true;
       }
-    }
-    if (status !== 'granted') {
-      console.warn('[geocerca] Sin permiso de background location. No se registran geocercas.');
       await registrarDebugLog('Sin permiso background location');
       return;
     }
+    permisoAvisado = false;
 
     // Obtener todas las tareas pendientes con geocerca activa
     const tareas = await obtenerTareas(false);
@@ -171,7 +169,7 @@ export async function registrarTodasLasGeocercas(): Promise<void> {
     );
 
     if (regionesSanas.length === 0) {
-      console.warn('[geocerca] No hay regiones sanas para registrar.');
+      console.log('[geocerca] No hay regiones sanas para registrar.');
       await registrarDebugLog('Sin regiones sanas');
       return;
     }
