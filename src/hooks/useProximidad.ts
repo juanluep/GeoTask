@@ -19,7 +19,7 @@
  * Cooldown compartido: usa las mismas claves de SecureStore que
  * notificacion.servicio.ts para no spammear.
  *
- * @version 1.0.0
+ * @version 1.1.0 (Logging de diagnóstico + lectura fresh del store)
  * ============================================================
  */
 
@@ -114,16 +114,30 @@ async function evaluarProximidad(
     (t) => !t.completada && t.geocercaActiva && t.latitud !== 0 && t.longitud !== 0
   );
 
+  if (pendientes.length === 0) {
+    console.log('[useProximidad] Sin tareas pendientes con geocerca activa.');
+    return;
+  }
+
+  console.log(`[useProximidad] Evaluando ${pendientes.length} tareas contra posición ${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+
   for (const tarea of pendientes) {
     const dist = distanciaMetros(lat, lon, tarea.latitud, tarea.longitud);
     const umbral = tarea.radioProximidad * FACTOR_MARGEN;
 
+    console.log(`[useProximidad]  → "${tarea.titulo}" | dist=${Math.round(dist)}m | umbral=${Math.round(umbral)}m | coords=${tarea.latitud.toFixed(5)},${tarea.longitud.toFixed(5)}`);
+
     if (dist <= umbral) {
       const enCooldown = await verificarCooldown(tarea.id);
       if (!enCooldown) {
+        console.log(`[useProximidad]  ✓ DENTRO DEL RADIO. Enviando notificación para "${tarea.titulo}"`);
         await enviarNotificacionProximidad(tarea, Math.round(dist));
         await registrarCooldown(tarea.id);
+      } else {
+        console.log(`[useProximidad]  ✗ En cooldown (30min). No se notifica "${tarea.titulo}"`);
       }
+    } else {
+      console.log(`[useProximidad]  ✗ Fuera de rango para "${tarea.titulo}"`);
     }
   }
 }
@@ -133,7 +147,11 @@ async function evaluarProximidad(
 // ──────────────────────────────────────────────
 
 export function useProximidad() {
-  const tareas = useTareaStore((s) => s.tareas);
+  // No capturamos tareas en el closure del render.
+  // En su lugar, leemos el estado actual del store DENTRO del sondeo.
+  // Esto evita que un intervalo "viejo" siga usando un array de tareas vacío
+  // o desactualizado si el componente no re-renderiza exactamente al ritmo
+  // de los cambios del store.
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -143,26 +161,36 @@ export function useProximidad() {
       if (!activo) return;
 
       try {
-        // Solo sondeamos si hay tareas pendientes
-        if (tareas.length === 0) return;
+        // Leer tareas FRESH desde el store en cada sondeo.
+        const tareas = useTareaStore.getState().tareas;
+
+        if (tareas.length === 0) {
+          console.log('[useProximidad] Sondeo: no hay tareas en el store.');
+          return;
+        }
 
         // Pedir permiso de ubicación si aún no lo tenemos.
-        // En Android, getCurrentPositionAsync falla silenciosamente sin permiso.
         let { status } = await Location.getForegroundPermissionsAsync();
         if (status !== 'granted') {
+          console.log('[useProximidad] Permiso de ubicación no concedido. Solicitando...');
           const respuesta = await Location.requestForegroundPermissionsAsync();
           status = respuesta.status;
-          if (status !== 'granted') return;
+          if (status !== 'granted') {
+            console.log('[useProximidad] Permiso denegado. Abortando sondeo.');
+            return;
+          }
         }
 
         const pos = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
+          mayShowUserSettingsDialog: false,
         });
 
         const { latitude, longitude } = pos.coords;
+        console.log(`[useProximidad] Ubicación obtenida: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+
         await evaluarProximidad(latitude, longitude, tareas);
       } catch (e) {
-        // Errores de GPS silenciados para no saturar la consola
         console.warn('[useProximidad] Error en sondeo:', e);
       }
     }
@@ -178,5 +206,5 @@ export function useProximidad() {
       clearTimeout(timerInicial);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [tareas]);
+  }, []); // ← deps vacías: el intervalo nunca se reinicia. Leemos el store dentro.
 }
