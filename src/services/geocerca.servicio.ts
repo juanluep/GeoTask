@@ -129,8 +129,17 @@ TaskManager.defineTask(NOMBRE_TAREA_GEOCERCA, async ({ data, error }: any) => {
  */
 export async function registrarTodasLasGeocercas(): Promise<void> {
   try {
-    // Verificar que tenemos permiso de ubicación en background
-    const { status } = await Location.getBackgroundPermissionsAsync();
+    // Verificar que tenemos permiso de ubicación en background.
+    // Si aún no lo tenemos, intentamos pedirlo directamente (auto-recuperación).
+    let { status } = await Location.getBackgroundPermissionsAsync();
+    if (status !== 'granted') {
+      try {
+        const respuesta = await Location.requestBackgroundPermissionsAsync();
+        status = respuesta.status;
+      } catch {
+        // Algunos dispositivos/entornos (ej. Expo Go) no soportan esta llamada
+      }
+    }
     if (status !== 'granted') {
       console.warn('[geocerca] Sin permiso de background location. No se registran geocercas.');
       await registrarDebugLog('Sin permiso background location');

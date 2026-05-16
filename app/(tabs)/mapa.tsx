@@ -27,7 +27,6 @@ import {
   Dimensions,
   ActivityIndicator,
   LayoutAnimation,
-  UIManager,
   Platform,
   TextInput,
   Modal,
@@ -43,10 +42,6 @@ import { BuscadorLugares } from '../../src/components/compartido/BuscadorLugares
 import { Colores, Espaciado, Radios, Sombras } from '../../src/config/tema';
 import { geocodingInverso } from '../../src/services/lugares.servicio';
 import type { Tarea } from '../../src/models/tarea.modelo';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 const { height: ALTO_PANTALLA } = Dimensions.get('window');
 
