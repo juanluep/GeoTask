@@ -98,6 +98,12 @@ interface EstadoAuth {
   /** Cerrar sesión y limpiar estado */
   cerrarSesion: () => Promise<void>;
 
+  /**
+   * Cerrar sesión, borrar TODOS los datos locales (SQLite + SecureStore)
+   * y limpiar el estado. Útil para testear instalaciones limpias.
+   */
+  resetearApp: () => Promise<void>;
+
   /** Limpia el último error */
   limpiarError: () => void;
 }
@@ -213,6 +219,20 @@ export const useAuthStore = create<EstadoAuth>((set) => ({
       await cerrarSesion();
       // onAuthStateChange dispara SIGNED_OUT y pone sesion = null
       set({ cargando: false });
+    } catch (e: any) {
+      set({ cargando: false, error: e.message });
+    }
+  },
+
+  // ── resetearApp ───────────────────────────
+  resetearApp: async () => {
+    set({ cargando: true, error: null });
+    try {
+      const { borrarDatosLocales } = await import('../services/basedatos.servicio');
+      await borrarDatosLocales();
+      await cerrarSesion();
+      // Forzar limpieza inmediata del estado sin esperar a onAuthStateChange
+      set({ ...camposDeSesion(null), cargando: false });
     } catch (e: any) {
       set({ cargando: false, error: e.message });
     }

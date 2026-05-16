@@ -37,6 +37,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.chanlusoft.geotask",
+      "allowBackup": false,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",

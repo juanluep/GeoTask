@@ -60,7 +60,7 @@ const MODOS_TRANSPORTE: { valor: ModoTransporte; icono: keyof typeof Ionicons.gl
 export default function PantallaAjustes() {
   const enrutador = useRouter();
   const { config, cargarConfiguracion, actualizarPreferencia } = useConfigStore();
-  const { sesion, esInvitado, cerrarSesion: cerrarSesionAuth } = useAuthStore();
+  const { sesion, esInvitado, cerrarSesion: cerrarSesionAuth, resetearApp } = useAuthStore();
   const { listas, cargarListas } = useListaStore();
   const [estadisticas, setEstadisticas] = useState<Estadisticas | null>(null);
   const [exportando, setExportando] = useState(false);
@@ -239,6 +239,34 @@ export default function PantallaAjustes() {
             <TouchableOpacity style={estilos.filaAccion} onPress={handleCerrarSesion} activeOpacity={0.75}>
               <Ionicons name="log-out-outline" size={20} color={Colores.error} />
               <Text style={[estilos.etiquetaAjuste, { color: Colores.error, flex: 1 }]}>Cerrar sesión</Text>
+            </TouchableOpacity>
+            <Separador />
+            <TouchableOpacity
+              style={estilos.filaAccion}
+              onPress={() => {
+                Alert.alert(
+                  'Borrar todos los datos',
+                  'Esto eliminará tu sesión, todas las tareas guardadas localmente y la configuración de la app.\n\nEs útil si quieres empezar de cero como si fuera una instalación nueva.',
+                  [
+                    { text: 'Cancelar', style: 'cancel' },
+                    {
+                      text: 'Borrar todo',
+                      style: 'destructive',
+                      onPress: async () => {
+                        await resetearApp();
+                        enrutador.replace('/(auth)/login');
+                      },
+                    },
+                  ]
+                );
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="trash-outline" size={20} color={Colores.error} />
+              <View style={{ flex: 1 }}>
+                <Text style={[estilos.etiquetaAjuste, { color: Colores.error }]}>Borrar todos los datos</Text>
+                <Text style={estilos.subtextoAjuste}>Cierra sesión y elimina tareas, listas y ajustes locales</Text>
+              </View>
             </TouchableOpacity>
           </View>
         ) : (

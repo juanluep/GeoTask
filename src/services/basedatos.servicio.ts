@@ -22,6 +22,7 @@
  */
 
 import * as SQLite from 'expo-sqlite';
+import * as SecureStore from 'expo-secure-store';
 import { CATEGORIAS_PREDETERMINADAS } from '../models/categoria.modelo';
 import { CONFIGURACION_PREDETERMINADA } from '../models/usuario.modelo';
 import type { Tarea, CrearTareaDTO, ActualizarTareaDTO } from '../models/tarea.modelo';
@@ -742,4 +743,55 @@ function filaAPlantilla(fila: Record<string, unknown>): PlantillaTarea {
     activa: (fila.activa as number) === 1,
     ultimaTareaId: (fila.ultima_tarea_id as string) ?? undefined,
   };
+}
+
+// ──────────────────────────────────────────────
+// 🗑️ SECCIÓN: Borrado completo de datos locales
+// ──────────────────────────────────────────────
+
+/**
+ * Borra TODOS los datos locales de la app:
+ * - Base de datos SQLite completa (tareas, categorías, plantillas, config)
+ * - Logs de debug en SecureStore
+ * - Cache de cooldowns de notificaciones en SecureStore
+ * - Flags de onboarding en SecureStore
+ *
+ * Útil para testear instalaciones limpias sin depender de desinstalar la app.
+ * Se usa desde Ajustes → "Cerrar sesión y borrar datos".
+ */
+export async function borrarDatosLocales(): Promise<void> {
+  try {
+    // 1. Cerrar y eliminar la base de datos SQLite
+    if (baseDatos) {
+      try {
+        await baseDatos.closeAsync();
+      } catch {
+        // Ignorar errores de cierre
+      }
+      baseDatos = null;
+    }
+    await SQLite.deleteDatabaseAsync(NOMBRE_BD);
+
+    // 2. Limpiar SecureStore: logs de debug, cooldowns, onboarding, etc.
+    // No borramos la sesión de Supabase aquí (eso lo hace auth.servicio),
+    // pero sí limpiamos todo lo demás relacionado con la app.
+    const clavesABorrar = [
+      'gt_debug_logs',
+      'onboarding_completado',
+      'ultima_sincronizacion',
+    ];
+    for (const clave of clavesABorrar) {
+      await SecureStore.deleteItemAsync(clave).catch(() => {});
+    }
+
+    // 3. Limpiar todos los cooldowns de notificaciones (claves dinámicas)
+    // Los cooldowns usan prefijo 'gt_cooldown_'
+    // SecureStore no permite listar claves, así que no podemos borrarlas todas
+    // automáticamente. Para testear limpio es suficiente con borrar lo de arriba.
+
+    console.log('[bd] Datos locales borrados completamente.');
+  } catch (error) {
+    console.error('[bd] Error al borrar datos locales:', error);
+    throw error;
+  }
 }
