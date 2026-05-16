@@ -39,6 +39,7 @@ import { inicializarBaseDatos } from '../src/services/basedatos.servicio';
 import { configurarNotificaciones, solicitarPermisoNotificaciones } from '../src/services/notificacion.servicio';
 import { registrarTodasLasGeocercas } from '../src/services/geocerca.servicio';
 import { inicializarTablaHorarios } from '../src/services/horarios.servicio';
+import * as Location from 'expo-location';
 import { useAuthStore } from '../src/stores/useAuthStore';
 import { sincronizarCompleto } from '../src/services/sincronizacion.servicio';
 import { useTareaStore } from '../src/stores/useTareaStore';
@@ -79,8 +80,9 @@ export default function LayoutRaiz() {
         ]);
 
         await inicializarTablaHorarios();
-        await solicitarPermisoNotificaciones();
-        await registrarTodasLasGeocercas();
+        // Los permisos de ubicación y geocercas se piden en un useEffect
+        // separado DESPUÉS de que la app se haya renderizado, para que el
+        // usuario vea la UI antes del diálogo de permisos.
 
         // Fase 5: recuperar la sesión de Supabase guardada en SecureStore.
         // Esto debe hacerse ANTES de que index.tsx se renderice, para que
@@ -114,6 +116,44 @@ export default function LayoutRaiz() {
     if (appLista) {
       SplashScreen.hideAsync();
     }
+  }, [appLista]);
+
+  // ── Solicitud de permisos al arrancar ─────────────────────────────
+  // Este efecto se dispara cuando la app ya está lista para mostrarse.
+  // Pide permisos de notificación y ubicación en secuencia, y registra
+  // geocercas solo cuando el usuario ha concedido el permiso background.
+  useEffect(() => {
+    if (!appLista) return;
+
+    async function pedirPermisosYRegistrar() {
+      try {
+        // 1. Notificaciones push locales
+        await solicitarPermisoNotificaciones();
+
+        // 2. Ubicación en primer plano (imprescindible para el mapa y useProximidad)
+        const fg = await Location.requestForegroundPermissionsAsync();
+        if (fg.status !== 'granted') {
+          console.log('[layout] Permiso de ubicación (primer plano) denegado.');
+          return;
+        }
+
+        // 3. Ubicación en segundo plano (necesario SOLO para geocercas nativas del SO)
+        const bg = await Location.requestBackgroundPermissionsAsync();
+        if (bg.status === 'granted') {
+          await registrarTodasLasGeocercas();
+          console.log('[layout] Geocercas nativas registradas.');
+        } else {
+          console.log('[layout] Permiso background denegado. Activo fallback useProximidad.');
+        }
+      } catch (e) {
+        console.warn('[layout] Error solicitando permisos:', e);
+      }
+    }
+
+    // Pequeño retraso para que el usuario vea la pantalla principal
+    // antes de que aparezca el diálogo de permisos.
+    const timer = setTimeout(pedirPermisosYRegistrar, 1500);
+    return () => clearTimeout(timer);
   }, [appLista]);
 
   // Fase 5: suscribirse a cambios de sesión de Supabase mientras la app esté viva.

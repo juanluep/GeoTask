@@ -146,8 +146,14 @@ export function useProximidad() {
         // Solo sondeamos si hay tareas pendientes
         if (tareas.length === 0) return;
 
-        const { status } = await Location.getForegroundPermissionsAsync();
-        if (status !== 'granted') return;
+        // Pedir permiso de ubicación si aún no lo tenemos.
+        // En Android, getCurrentPositionAsync falla silenciosamente sin permiso.
+        let { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          const respuesta = await Location.requestForegroundPermissionsAsync();
+          status = respuesta.status;
+          if (status !== 'granted') return;
+        }
 
         const pos = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
