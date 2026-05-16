@@ -94,9 +94,15 @@ export default function LayoutRaiz() {
         // termina recargamos el store para que la UI refleje las tareas descargadas.
         const userId = useAuthStore.getState().userId;
         if (userId) {
+          console.log('[layout] Iniciando sincronización completa para userId:', userId);
           sincronizarCompleto(userId)
-            .then(() => useTareaStore.getState().cargarTareas())
-            .catch(() => {});
+            .then(() => {
+              console.log('[layout] Sincronización completada. Recargando tareas...');
+              return useTareaStore.getState().cargarTareas();
+            })
+            .catch((err) => {
+              console.warn('[layout] Error en sincronización o recarga de tareas:', err);
+            });
         }
       } catch (error) {
         // En producción, aquí registraríamos el error en un servicio
@@ -194,7 +200,7 @@ export default function LayoutRaiz() {
           if (userId) {
             sincronizarCompleto(userId)
               .then(() => useTareaStore.getState().cargarTareas())
-              .catch(() => {});
+              .catch((err) => console.warn('[layout] Error sync al volver a primer plano:', err));
           }
         }
       }

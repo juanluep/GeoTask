@@ -55,13 +55,23 @@ let baseDatos: SQLite.SQLiteDatabase | null = null;
  * que la existente está rota, garantizando que siempre se devuelve una
  * conexión válida.
  */
+/** Timeout de verificación de conexión SQLite (ms) */
+const TIMEOUT_VERIFICACION_BD = 3000;
+
 async function obtenerBD(): Promise<SQLite.SQLiteDatabase> {
   if (baseDatos) {
     // Verificamos que la conexión sigue viva con una operación mínima.
-    // Si lanza NullPointerException, la descartamos y abrimos una nueva.
+    // Si lanza NullPointerException o se queda colgada (New Architecture),
+    // la descartamos y abrimos una nueva.
     try {
-      await baseDatos.getFirstAsync<{ v: number }>('SELECT 1 AS v');
+      await Promise.race([
+        baseDatos.getFirstAsync<{ v: number }>('SELECT 1 AS v'),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('SQLite ping timeout')), TIMEOUT_VERIFICACION_BD)
+        ),
+      ]);
     } catch {
+      console.warn('[bd] Conexión SQLite anterior inválida o colgada. Reiniciando...');
       baseDatos = null;
     }
   }

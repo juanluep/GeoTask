@@ -16,7 +16,7 @@
 
 import { Share } from 'react-native';
 import type { Tarea } from '../models/tarea.modelo';
-import type { ListaCompartida } from '../models/lista.modelo';
+import type { Lista } from './listas.servicio';
 
 /** Mapeo de claves largas a cortas para reducir tamaño de URL */
 const MAPA_CLAVES = {
@@ -78,7 +78,7 @@ export async function compartirTarea(tarea: Tarea) {
 /**
  * Genera y lanza el diálogo de compartir para invitar a una lista.
  */
-export async function compartirLista(lista: ListaCompartida) {
+export async function compartirLista(lista: Lista) {
   try {
     const codigo = lista.codigo.toUpperCase();
     const url = `${DOMINIO_BASE}/join/${codigo}`;

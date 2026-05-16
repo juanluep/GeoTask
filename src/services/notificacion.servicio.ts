@@ -118,14 +118,12 @@ export async function enviarNotificacionProximidad(
    * en background o desde nuestro fallback de proximidad por polling.
    */
   await Notifications.presentNotificationAsync({
-    content: {
-      title: `📍 ${tarea.titulo}`,
-      body: cuerpo,
-      // data permite pasar información extra que se recupera al tocar la notificación
-      // Úsalo en Fase 5 para navegar directamente al detalle de la tarea
-      data: { tareaId: tarea.id, tipo: 'proximidad' },
-      sound: true,
-    },
+    title: `📍 ${tarea.titulo}`,
+    body: cuerpo,
+    // data permite pasar información extra que se recupera al tocar la notificación
+    // Úsalo en Fase 5 para navegar directamente al detalle de la tarea
+    data: { tareaId: tarea.id, tipo: 'proximidad' },
+    sound: true,
   });
 
   // Registrar el timestamp de este aviso para el cooldown
@@ -140,11 +138,9 @@ export async function enviarNotificacionProximidad(
  */
 export async function enviarNotificacionPrueba(): Promise<void> {
   await Notifications.presentNotificationAsync({
-    content: {
-      title: '✅ GeoTask funciona',
-      body: 'Las notificaciones de proximidad están configuradas correctamente.',
-      data: { tipo: 'prueba' },
-    },
+    title: '✅ GeoTask funciona',
+    body: 'Las notificaciones de proximidad están configuradas correctamente.',
+    data: { tipo: 'prueba' },
   });
 }
 

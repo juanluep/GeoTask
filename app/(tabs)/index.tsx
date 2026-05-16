@@ -38,7 +38,7 @@ export default function PantallaInicio() {
   const { cargarTareas, completarTarea, cargando, filtroCategoria, cambiarFiltroCategoria } = useTareaStore();
   const tareasFiltradas = useTareasFiltradas();
   const { categorias, cargarCategorias } = useCategoriaStore();
-  const { listas, tareasLista, listaActivaId, activarLista, cargarListas, cargarTareasLista } = useListaStore();
+  const { listas, tareasLista, listaActivaId, activarLista, cargarListas, cargarTareasLista, cargando: cargandoListas } = useListaStore();
 
   // Cargamos datos al montar la pantalla
   useEffect(() => {
@@ -56,6 +56,12 @@ export default function PantallaInicio() {
 
   // Las tareas a mostrar dependen de si hay lista activa
   const tareasActuales = listaActivaId ? tareasLista : tareasFiltradas;
+
+  // Estado de carga: si estamos en una lista compartida, usamos el cargando del
+  // store de listas; si no, el del store de tareas. Esto evita que al entrar
+  // en una lista se muestre "Sin tareas" mientras carga, o que se quede
+  // en "Cargando" indefinidamente si el store principal se bloquea.
+  const estaCargando = listaActivaId ? cargandoListas : cargando;
 
   const recargar = useCallback(() => {
     if (listaActivaId) {
@@ -205,7 +211,7 @@ export default function PantallaInicio() {
       </View>
 
       {/* Lista de tareas */}
-      {cargando && tareasActuales.length === 0 ? (
+      {estaCargando && tareasActuales.length === 0 ? (
         <Indicador mensaje="Cargando tareas..." />
       ) : tareasActuales.length === 0 ? (
         <EstadoVacio onCrear={() => enrutador.push('/(tabs)/nueva')} />
@@ -216,7 +222,7 @@ export default function PantallaInicio() {
           contentContainerStyle={estilos.listaContenido}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={cargando} onRefresh={recargar} tintColor={Colores.primario} />
+            <RefreshControl refreshing={estaCargando} onRefresh={recargar} tintColor={Colores.primario} />
           }
           renderItem={({ item }) => (
             <TarjetaTarea

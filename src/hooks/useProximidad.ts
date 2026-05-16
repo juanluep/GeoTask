@@ -134,7 +134,7 @@ async function evaluarProximidad(
 
 export function useProximidad() {
   const tareas = useTareaStore((s) => s.tareas);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     let activo = true;

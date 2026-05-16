@@ -129,9 +129,18 @@ export const useTareaStore = create<EstadoTareas>((set, get) => ({
     set({ cargando: true, error: null });
     try {
       // Obtenemos solo las tareas pendientes (completada = false)
-      const tareas = await obtenerTareas(false);
+      // Añadimos un timeout de seguridad para evitar loader infinito
+      // si SQLite se queda colgado (bug conocido en New Architecture).
+      const TIMEOUT_CARGA = 8000;
+      const tareas = await Promise.race([
+        obtenerTareas(false),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout cargando tareas desde SQLite')), TIMEOUT_CARGA)
+        ),
+      ]);
       set({ tareas, cargando: false });
     } catch (error) {
+      console.error('[useTareaStore] Error en cargarTareas:', error);
       set({
         error: 'No se pudieron cargar las tareas. Intenta de nuevo.',
         cargando: false,

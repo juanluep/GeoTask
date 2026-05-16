@@ -195,9 +195,17 @@ export const useListaStore = create<EstadoListas>((set, get) => ({
   cargarTareasLista: async (listaId: string) => {
     set({ cargando: true, error: null });
     try {
-      const tareasLista = await obtenerTareasLista(listaId);
+      // Timeout de seguridad para evitar loader infinito si Supabase no responde
+      const TIMEOUT_CARGA_LISTA = 10000;
+      const tareasLista = await Promise.race([
+        obtenerTareasLista(listaId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout cargando tareas de lista')), TIMEOUT_CARGA_LISTA)
+        ),
+      ]);
       set({ tareasLista, cargando: false });
-    } catch {
+    } catch (e: any) {
+      console.error('[useListaStore] Error cargando tareas de lista:', e);
       set({ error: 'Error al cargar las tareas de la lista.', cargando: false });
     }
   },

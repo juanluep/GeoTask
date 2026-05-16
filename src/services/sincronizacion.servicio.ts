@@ -30,6 +30,7 @@ import {
   upsertTarea,
   leerConfiguracion,
   guardarConfiguracion,
+  obtenerTareas,
 } from './basedatos.servicio';
 import type { Tarea } from '../models/tarea.modelo';
 
@@ -133,16 +134,35 @@ export async function descargarCambiosRemotos(userId: string): Promise<void> {
     // Leer timestamp de última sync (null = nunca sincronizado = primer arranque)
     const ultimaSync = await leerConfiguracion<string>(CLAVE_ULTIMA_SYNC);
 
+    // Diagnosticar: cuántas tareas tenemos localmente
+    const tareasLocales = await obtenerTareas(false);
+    const totalLocales = tareasLocales.length;
+
+    console.log(`[sync] descargarCambiosRemotos | userId=${userId} | ultimaSync=${ultimaSync ?? 'null'} | tareasLocales=${totalLocales}`);
+
     // Construir la query base
     let query = supabase
       .from('tareas')
       .select('*')
       .eq('owner_id', userId);
 
-    // Si ya sincronizamos antes, pedimos solo los cambios desde entonces.
-    // Si es la primera vez, bajamos todas las tareas del usuario sin filtro de fecha.
-    if (ultimaSync) {
+    // Estrategia de descarga:
+    // - Si nunca sincronizamos (ultimaSync es null) → bajamos TODO.
+    // - Si ya sincronizamos pero NO tenemos tareas locales → probablemente
+    //   la base local se borró o es una instalación nueva. Forzamos descarga
+    //   completa ignorando ultimaSync para recuperar las tareas de la nube.
+    // - En otro caso → deltas desde la última sync.
+    const forzarCompleto = ultimaSync !== null && totalLocales === 0;
+
+    if (!ultimaSync || forzarCompleto) {
+      if (forzarCompleto) {
+        console.log('[sync] Forzando descarga COMPLETA (hay ultimaSync pero 0 tareas locales)');
+      } else {
+        console.log('[sync] Descarga COMPLETA (primer arranque, sin ultimaSync)');
+      }
+    } else {
       query = query.gt('updated_at', ultimaSync);
+      console.log('[sync] Descarga incremental desde', ultimaSync);
     }
 
     const { data, error } = await query;
@@ -152,7 +172,12 @@ export async function descargarCambiosRemotos(userId: string): Promise<void> {
       return;
     }
 
-    if (!data || data.length === 0) return;
+    if (!data || data.length === 0) {
+      console.log('[sync] Sin cambios nuevos remotos (data vacío)');
+      return;
+    }
+
+    console.log(`[sync] Recibidas ${data.length} tareas desde Supabase`);
 
     // Convertir filas de Supabase (snake_case, timestamps de PG) al modelo Tarea
     for (const fila of data) {
@@ -183,6 +208,7 @@ export async function descargarCambiosRemotos(userId: string): Promise<void> {
 
     // Guardar el momento actual como nueva marca de sincronización
     await guardarConfiguracion(CLAVE_ULTIMA_SYNC, new Date().toISOString());
+    console.log(`[sync] Sincronización completada. ${data.length} tareas insertadas/actualizadas en SQLite.`);
   } catch (e) {
     console.warn('[sync] Error en descargarCambiosRemotos:', e);
   }
