@@ -42,6 +42,7 @@ import { inicializarTablaHorarios } from '../src/services/horarios.servicio';
 import { useAuthStore } from '../src/stores/useAuthStore';
 import { sincronizarCompleto } from '../src/services/sincronizacion.servicio';
 import { useTareaStore } from '../src/stores/useTareaStore';
+import { useProximidad } from '../src/hooks/useProximidad';
 import '../global.css';
 
 // ──────────────────────────────────────────────
@@ -57,6 +58,10 @@ export default function LayoutRaiz() {
   // Guardamos el estado anterior de AppState para detectar solo la transición
   // background → active (no queremos sincronizar si la app ya estaba activa).
   const estadoAppAnterior = useRef<AppStateStatus>(AppState.currentState);
+
+  // Fallback de proximidad por polling: calcula distancias manualmente cada 20s.
+  // Es el plan B cuando el geofencing nativo del SO no funciona (muy común).
+  useProximidad();
 
   useEffect(() => {
     async function cargarRecursos() {

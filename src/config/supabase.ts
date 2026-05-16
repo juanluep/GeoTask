@@ -22,8 +22,16 @@ import { createClient } from '@supabase/supabase-js';
 
 // Las variables de entorno con prefijo EXPO_PUBLIC_ son accesibles en el
 // bundle de la app. Se definen en el fichero .env de la raíz del proyecto.
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+//
+// ⚠️ En builds de EAS la nube no ve el .env local (está en .gitignore).
+// Por eso usamos valores hardcodeados como fallback. La anon key es pública
+// por diseño (vive en el cliente), así que no hay riesgo de seguridad.
+const SUPABASE_URL =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ||
+  'https://iydvbkhlzjojsetjukvj.supabase.co';
+const SUPABASE_ANON_KEY =
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+  'sb_publishable_VMYfG5lDWKLXnJOdtGxyVg_JOQZK0HA';
 
 // SecureStore acepta hasta ~2048 bytes por clave en Android.
 // Usamos 1900 como margen de seguridad frente al límite exacto.

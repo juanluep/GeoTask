@@ -84,7 +84,9 @@ export function useUbicacion() {
       const concedidoBack = backStatus.status === 'granted';
       if (concedidoBack) {
         // Al tener permiso, disparamos el registro que antes falló en _layout.tsx
-        registrarTodasLasGeocercas();
+        registrarTodasLasGeocercas().catch((e) =>
+          console.warn('[useUbicacion] Error al registrar geocercas:', e)
+        );
       }
 
       setEstado((prev) => ({ ...prev, permiso: concedidoBack ? 'siempre' : 'concedido', monitorizando: true }));

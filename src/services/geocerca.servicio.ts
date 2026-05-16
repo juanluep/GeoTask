@@ -91,11 +91,17 @@ TaskManager.defineTask(NOMBRE_TAREA_GEOCERCA, async ({ data, error }: any) => {
 
     const verificarHorarios = await leerConfiguracion<boolean>('verificarHorarios');
     if (verificarHorarios && tarea.osmId) {
-      const horario = await obtenerHorario(tarea.osmId, tarea.latitud, tarea.longitud);
-      if (!horario.sinDatos && !horario.abierto) {
-        console.log(`[geocerca] No se notifica "${tarea.titulo}" — establecimiento cerrado.`);
-        await registrarDebugLog(`Establecimiento cerrado: ${tarea.titulo}`);
-        return;
+      try {
+        const horario = await obtenerHorario(tarea.osmId, tarea.latitud, tarea.longitud);
+        if (!horario.sinDatos && !horario.abierto) {
+          console.log(`[geocerca] No se notifica "${tarea.titulo}" — establecimiento cerrado.`);
+          await registrarDebugLog(`Establecimiento cerrado: ${tarea.titulo}`);
+          return;
+        }
+      } catch (errHorario) {
+        // Si la API de horarios falla (sin red, timeout), notificamos igualmente
+        console.warn('[geocerca] Error al verificar horario, se notifica de todas formas:', errHorario);
+        await registrarDebugLog(`Error horario (notificando igual): ${tarea.titulo}`);
       }
     }
 
@@ -127,12 +133,13 @@ export async function registrarTodasLasGeocercas(): Promise<void> {
     const { status } = await Location.getBackgroundPermissionsAsync();
     if (status !== 'granted') {
       console.warn('[geocerca] Sin permiso de background location. No se registran geocercas.');
+      await registrarDebugLog('Sin permiso background location');
       return;
     }
 
     // Obtener todas las tareas pendientes con geocerca activa
     const tareas = await obtenerTareas(false);
-    const tareasConGeocerca = tareas.filter((t) => t.geocercaActiva);
+    const tareasConGeocerca = tareas.filter((t) => t.geocercaActiva && t.latitud !== 0 && t.longitud !== 0);
 
     if (tareasConGeocerca.length === 0) {
       // Si no hay tareas, detener el geofencing si estaba activo
@@ -149,11 +156,29 @@ export async function registrarTodasLasGeocercas(): Promise<void> {
       tareaARegion(tarea)
     );
 
+    // Sanidad: descartar regiones con coordenadas inválidas o radio cero
+    const regionesSanas = regiones.filter(
+      (r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude) && r.radius > 0
+    );
+
+    if (regionesSanas.length === 0) {
+      console.warn('[geocerca] No hay regiones sanas para registrar.');
+      await registrarDebugLog('Sin regiones sanas');
+      return;
+    }
+
     // Iniciar geofencing. Si ya estaba activo, esto lo reemplaza.
-    await Location.startGeofencingAsync(NOMBRE_TAREA_GEOCERCA, regiones);
+    try {
+      await Location.startGeofencingAsync(NOMBRE_TAREA_GEOCERCA, regionesSanas);
+    } catch (startErr) {
+      const startMsg = startErr instanceof Error ? startErr.message : String(startErr);
+      console.error('[geocerca] startGeofencingAsync falló:', startMsg);
+      await registrarDebugLog(`startGeofencingAsync falló: ${startMsg}`);
+      return;
+    }
 
     const activo = await Location.hasStartedGeofencingAsync(NOMBRE_TAREA_GEOCERCA);
-    const resumen = `${regiones.length} geocercas — monitor ${activo ? 'ACTIVO' : 'INACTIVO'}`;
+    const resumen = `${regionesSanas.length} geocercas — monitor ${activo ? 'ACTIVO' : 'INACTIVO'}`;
     console.log(`[geocerca] ${resumen}`);
     await registrarDebugLog(`Registro: ${resumen}`);
   } catch (error) {
@@ -266,6 +291,6 @@ function tareaARegion(tarea: Tarea): Location.LocationRegion {
     longitude: tarea.longitud,
     radius: tarea.radioProximidad,
     notifyOnEnter: true,   // Avisar al entrar en la zona
-    notifyOnExit: false,   // No avisar al salir (simplifica el flujo)
+    notifyOnExit: true,    // Necesario para que Android rastree transiciones correctamente
   };
 }

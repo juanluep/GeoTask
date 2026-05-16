@@ -111,7 +111,13 @@ export async function enviarNotificacionProximidad(
     ? `Estás ${distanciaTexto} de ${tarea.nombreLugar}`
     : `Estás ${distanciaTexto} — ${tarea.direccion || 'del lugar'}`;
 
-  await Notifications.scheduleNotificationAsync({
+  /**
+   * presentNotificationAsync muestra la notificación inmediatamente,
+   * sin pasar por el scheduler. Es más robusto que scheduleNotificationAsync
+   * con trigger: null, especialmente cuando se llama desde un TaskManager
+   * en background o desde nuestro fallback de proximidad por polling.
+   */
+  await Notifications.presentNotificationAsync({
     content: {
       title: `📍 ${tarea.titulo}`,
       body: cuerpo,
@@ -120,8 +126,6 @@ export async function enviarNotificacionProximidad(
       data: { tareaId: tarea.id, tipo: 'proximidad' },
       sound: true,
     },
-    // trigger: null = enviar inmediatamente (no programada para el futuro)
-    trigger: null,
   });
 
   // Registrar el timestamp de este aviso para el cooldown
@@ -135,13 +139,12 @@ export async function enviarNotificacionProximidad(
  * Útil durante el desarrollo.
  */
 export async function enviarNotificacionPrueba(): Promise<void> {
-  await Notifications.scheduleNotificationAsync({
+  await Notifications.presentNotificationAsync({
     content: {
       title: '✅ GeoTask funciona',
       body: 'Las notificaciones de proximidad están configuradas correctamente.',
       data: { tipo: 'prueba' },
     },
-    trigger: null,
   });
 }
 
