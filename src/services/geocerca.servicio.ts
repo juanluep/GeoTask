@@ -158,17 +158,26 @@ async function marcarCooldown(tareaId: string): Promise<void> {
 }
 
 TaskManager.defineTask(NOMBRE_TAREA_FOREGROUND, async ({ data, error }: any) => {
+  // Logging de diagnóstico crítico: verificar si la tarea se ejecuta en background
+  console.log('[foreground] TASK EJECUTADA. data presente:', !!data, 'error:', !!error);
+  await registrarDebugLog('Foreground task ejecutada');
+
   if (error) {
-    console.error('[foreground] Error:', error.message);
-    await registrarDebugLog(`Foreground error: ${error.message}`);
+    console.error('[foreground] Error en task:', error.message);
+    await registrarDebugLog(`Foreground task error: ${error.message}`);
     return;
   }
 
-  const { locations } = data;
-  if (!locations || locations.length === 0) return;
+  const { locations } = data || {};
+  if (!locations || locations.length === 0) {
+    console.warn('[foreground] Task ejecutada pero sin locations. data:', JSON.stringify(data));
+    await registrarDebugLog('Foreground task: sin locations');
+    return;
+  }
 
   const { latitude, longitude } = locations[0].coords;
-  console.log(`[foreground] Ubicación: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+  console.log(`[foreground] Ubicación recibida: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+  await registrarDebugLog(`FG loc: ${latitude.toFixed(4)},${longitude.toFixed(4)}`);
 
   try {
     const tareas = await obtenerTareas(false);
@@ -176,23 +185,29 @@ TaskManager.defineTask(NOMBRE_TAREA_FOREGROUND, async ({ data, error }: any) => 
       (t) => !t.completada && t.geocercaActiva && t.latitud !== 0 && t.longitud !== 0
     );
 
+    console.log(`[foreground] Evaluando ${pendientes.length} tareas...`);
+
     for (const tarea of pendientes) {
       const dist = distanciaMetros(latitude, longitude, tarea.latitud, tarea.longitud);
       const umbral = tarea.radioProximidad * FACTOR_MARGEN;
 
+      console.log(`[foreground]  → "${tarea.titulo}" dist=${Math.round(dist)}m umbral=${Math.round(umbral)}m`);
+
       if (dist <= umbral) {
         const enCooldown = await verificarCooldown(tarea.id);
         if (!enCooldown) {
-          console.log(`[foreground] DENTRO DEL RADIO: "${tarea.titulo}" (${Math.round(dist)}m)`);
+          console.log(`[foreground] ✓ DENTRO DEL RADIO: "${tarea.titulo}" (${Math.round(dist)}m)`);
           await enviarNotificacionProximidad(tarea, Math.round(dist));
           await marcarCooldown(tarea.id);
-          await registrarDebugLog(`Notif foreground: ${tarea.titulo} (${Math.round(dist)}m)`);
+          await registrarDebugLog(`Notif FG: ${tarea.titulo} (${Math.round(dist)}m)`);
+        } else {
+          console.log(`[foreground] ✗ Cooldown: "${tarea.titulo}"`);
         }
       }
     }
   } catch (err) {
     console.error('[foreground] Error evaluando proximidad:', err);
-    await registrarDebugLog(`Error foreground eval: ${err}`);
+    await registrarDebugLog(`Error FG eval: ${err}`);
   }
 });
 
@@ -335,13 +350,13 @@ export async function iniciarServicioForeground(): Promise<void> {
 
     await Location.startLocationUpdatesAsync(NOMBRE_TAREA_FOREGROUND, {
       accuracy: Location.Accuracy.Balanced,
-      timeInterval: 20_000,          // mínimo ~20s entre actualizaciones
-      distanceInterval: 0,            // siempre notificar, aunque no se mueva
+      timeInterval: 15_000,          // mínimo ~15s entre actualizaciones
+      distanceInterval: 0,           // siempre notificar, aunque no se mueva
       showsBackgroundLocationIndicator: true,
       foregroundService: {
         notificationTitle: 'GeoTask vigilando tareas cercanas',
         notificationBody: 'Detectando cuando pasas cerca de lugares con tareas pendientes',
-        notificationColor: '#1d4ed8',
+        notificationColor: '#1D4ED8',
       },
     });
 
