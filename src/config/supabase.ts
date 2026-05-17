@@ -33,6 +33,12 @@ const SUPABASE_ANON_KEY =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
   'sb_publishable_VMYfG5lDWKLXnJOdtGxyVg_JOQZK0HA';
 
+// Diagnóstico crítico: saber si estamos usando el fallback o la variable real.
+// En builds de EAS si las variables no están configuradas, el fallback debe ser válido.
+console.log('[supabase] URL:', SUPABASE_URL);
+console.log('[supabase] ANON_KEY source:', process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ? 'env' : 'fallback');
+console.log('[supabase] ANON_KEY prefix:', SUPABASE_ANON_KEY.slice(0, 20) + '...');
+
 // SecureStore acepta hasta ~2048 bytes por clave en Android.
 // Usamos 1900 como margen de seguridad frente al límite exacto.
 const MAX_CHUNK = 1900;

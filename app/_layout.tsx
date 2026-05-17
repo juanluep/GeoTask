@@ -97,9 +97,11 @@ export default function LayoutRaiz() {
           // termina recargamos el store para que la UI refleje las tareas descargadas.
           console.log('[layout] Sesión activa detectada. Iniciando sincronización para userId:', userId);
           sincronizarCompleto(userId)
-            .then(() => {
+            .then(async () => {
               console.log('[layout] Sincronización completada. Recargando tareas...');
-              return useTareaStore.getState().cargarTareas();
+              await useTareaStore.getState().cargarTareas();
+              const totalTareas = useTareaStore.getState().tareas.length;
+              console.log(`[layout] Tareas locales tras sync: ${totalTareas}`);
             })
             .catch((err) => {
               console.warn('[layout] Error en sincronización o recarga de tareas:', err);
@@ -224,7 +226,10 @@ export default function LayoutRaiz() {
           if (userId) {
             registrarTodasLasGeocercas().catch(() => {});
             sincronizarCompleto(userId)
-              .then(() => useTareaStore.getState().cargarTareas())
+              .then(async () => {
+                await useTareaStore.getState().cargarTareas();
+                console.log(`[layout] Tareas locales tras sync (primer plano): ${useTareaStore.getState().tareas.length}`);
+              })
               .catch((err) => console.warn('[layout] Error sync al volver a primer plano:', err));
           }
         }

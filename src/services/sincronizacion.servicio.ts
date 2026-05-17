@@ -12,14 +12,17 @@
  *
  * LECTURA:
  *   Al arrancar la app (si hay sesión), se suben las pendientes
- *   y se descargan los cambios remotos desde la última sync.
+ *   y se descargan TODAS las tareas del usuario desde Supabase.
+ *   GeoTask es una app personal; no habrá miles de tareas, por lo que
+ *   descargar todo el historial en cada arranque es barato y MUCHO más
+ *   robusto que un sync incremental basado en `updated_at` (que fallaba
+ *   silenciosamente en builds de producción por autobackup de Android).
  *
  * CONFLICTOS:
- *   Last-write-wins usando `updated_at` de Supabase.
- *   Si el servidor tiene un registro más nuevo → sobrescribe local.
- *   Si el local es más nuevo (editado offline) → el local gana al subir.
+ *   Si una tarea fue editada offline (sincronizado = 0), NO la sobreescribimos
+ *   con la versión remota. El local gana. En otro caso, last-write-wins.
  *
- * @version 1.0.0
+ * @version 2.0.0 (Descarga completa robusta, sin updated_at)
  * ============================================================
  */
 
@@ -28,15 +31,9 @@ import {
   obtenerTareasSinSincronizar,
   marcarTareaSincronizada,
   upsertTarea,
-  leerConfiguracion,
-  guardarConfiguracion,
   obtenerTareas,
 } from './basedatos.servicio';
 import type { Tarea } from '../models/tarea.modelo';
-
-// Clave en la tabla `configuracion` para guardar el timestamp de la última sync.
-// Usamos ISO 8601 para que Supabase (PostgreSQL) lo entienda directamente.
-const CLAVE_ULTIMA_SYNC = 'ultima_sincronizacion';
 
 // ──────────────────────────────────────────────
 // SECCIÓN: Subir tareas a Supabase
@@ -72,7 +69,6 @@ export async function subirTarea(tarea: Tarea, userId: string): Promise<void> {
     fecha_limite:     tarea.fechaLimite ?? null,
     fotos:            tarea.fotos ?? [],
     plantilla_id:     tarea.plantillaId ?? null,
-    updated_at:       new Date().toISOString(), // necesario para el filtro de sync incremental
   });
 
   if (error) {
@@ -85,10 +81,6 @@ export async function subirTarea(tarea: Tarea, userId: string): Promise<void> {
 
 /**
  * Elimina una tarea del servidor Supabase.
- * Se llama cuando el usuario borra una tarea localmente.
- * Si falla (sin conexión), la tarea ya no está en SQLite local
- * y quedará huérfana en Supabase hasta la próxima sesión.
- * TODO (Fase futura): tabla `eliminaciones_pendientes` para registrar borrados offline.
  */
 export async function eliminarTareaRemota(id: string): Promise<void> {
   const { error } = await supabase.from('tareas').delete().eq('id', id);
@@ -103,84 +95,76 @@ export async function eliminarTareaRemota(id: string): Promise<void> {
 
 /**
  * Sube todas las tareas con `sincronizado = 0` a Supabase.
- * Se llama al arrancar la app si hay sesión activa, para enviar
- * cualquier cambio hecho mientras no había conexión.
  */
 export async function sincronizarPendientes(userId: string): Promise<void> {
   try {
     const pendientes = await obtenerTareasSinSincronizar();
-    if (pendientes.length === 0) return;
+    if (pendientes.length === 0) {
+      console.log('[sync] sincronizarPendientes: 0 tareas pendientes.');
+      return;
+    }
 
-    await Promise.allSettled(
+    console.log(`[sync] sincronizarPendientes: subiendo ${pendientes.length} tareas...`);
+    const resultados = await Promise.allSettled(
       pendientes.map((tarea) => subirTarea(tarea, userId))
     );
+    const exitosos = resultados.filter((r) => r.status === 'fulfilled').length;
+    console.log(`[sync] sincronizarPendientes: ${exitosos}/${pendientes.length} subidas correctamente.`);
   } catch (e) {
     console.warn('[sync] Error en sincronizarPendientes:', e);
   }
 }
 
 /**
- * Descarga de Supabase las tareas que han cambiado desde la última sync.
- * Usa un timestamp incremental para pedir solo los deltas, no todo el historial.
+ * Descarga de Supabase TODAS las tareas del usuario.
  *
- * Estrategia:
- * 1. Lee `ultima_sincronizacion` de la tabla `configuracion` de SQLite
- * 2. Consulta Supabase: tareas del usuario con updated_at > ultimaSync
- * 3. Hace upsert de cada tarea recibida en SQLite local
- * 4. Actualiza el timestamp de última sync
+ * Estrategia robusta (v2):
+ * 1. Consulta simple: SELECT * FROM tareas WHERE owner_id = userId
+ *    Sin filtros de fecha ni de updated_at. Esto evita que un
+ *    autobackup de Android restaure un `ultimaSync` corrupto y
+ *    haga que el sync incremental devuelva [] silenciosamente.
+ * 2. Antes de upsertear una tarea remota, verificamos si existe local
+ *    y si tiene `sincronizado = 0` (fue editada offline). Si es así,
+ *    NO la sobreescribimos: la versión local es más nueva.
+ * 3. Logueamos TODO para poder diagnosticar en builds de producción.
  */
 export async function descargarCambiosRemotos(userId: string): Promise<void> {
   try {
-    // Leer timestamp de última sync (null = nunca sincronizado = primer arranque)
-    const ultimaSync = await leerConfiguracion<string>(CLAVE_ULTIMA_SYNC);
+    console.log(`[sync] descargarCambiosRemotos | userId=${userId} | modo=DESCARGA_COMPLETA`);
 
-    // Diagnosticar: cuántas tareas tenemos localmente
-    const tareasLocales = await obtenerTareas(false);
-    const totalLocales = tareasLocales.length;
-
-    console.log(`[sync] descargarCambiosRemotos | userId=${userId} | ultimaSync=${ultimaSync ?? 'null'} | tareasLocales=${totalLocales}`);
-
-    // Construir la query base
-    let query = supabase
+    const { data, error } = await supabase
       .from('tareas')
       .select('*')
       .eq('owner_id', userId);
 
-    // Estrategia de descarga:
-    // - Si nunca sincronizamos (ultimaSync es null) → bajamos TODO.
-    // - Si ya sincronizamos pero NO tenemos tareas locales → probablemente
-    //   la base local se borró o es una instalación nueva. Forzamos descarga
-    //   completa ignorando ultimaSync para recuperar las tareas de la nube.
-    // - En otro caso → deltas desde la última sync.
-    const forzarCompleto = ultimaSync !== null && totalLocales === 0;
-
-    if (!ultimaSync || forzarCompleto) {
-      if (forzarCompleto) {
-        console.log('[sync] Forzando descarga COMPLETA (hay ultimaSync pero 0 tareas locales)');
-      } else {
-        console.log('[sync] Descarga COMPLETA (primer arranque, sin ultimaSync)');
-      }
-    } else {
-      query = query.gt('updated_at', ultimaSync);
-      console.log('[sync] Descarga incremental desde', ultimaSync);
-    }
-
-    const { data, error } = await query;
-
     if (error) {
-      console.warn('[sync] Error descargando cambios remotos:', error.message);
+      console.warn('[sync] Error Supabase al descargar tareas:', error.message, '| code:', error.code);
       return;
     }
 
     if (!data || data.length === 0) {
-      console.log('[sync] Sin cambios nuevos remotos (data vacío)');
+      console.log('[sync] Supabase devolvió 0 tareas para este usuario. Revisa RLS o que la tabla tareas tenga datos con owner_id correcto.');
       return;
     }
 
     console.log(`[sync] Recibidas ${data.length} tareas desde Supabase`);
 
-    // Convertir filas de Supabase (snake_case, timestamps de PG) al modelo Tarea
+    // Obtener IDs de tareas locales que fueron editadas offline (sincronizado = 0)
+    // para no sobreescribirlas con la versión remota.
+    const localesSinSync = await obtenerTareasSinSincronizar();
+    const idsLocalesSinSync = new Set(localesSinSync.map((t) => t.id));
+
+    let insertadas = 0;
+    let saltadas = 0;
+
     for (const fila of data) {
+      // Si la tarea fue editada localmente sin subir, preservamos la local
+      if (idsLocalesSinSync.has(fila.id)) {
+        console.log(`[sync] Tarea ${fila.id} tiene cambios locales sin subir. Se preserva la versión local.`);
+        saltadas++;
+        continue;
+      }
+
       const tarea: Tarea = {
         id:              fila.id,
         titulo:          fila.titulo,
@@ -204,11 +188,10 @@ export async function descargarCambiosRemotos(userId: string): Promise<void> {
         creadoPor:       fila.owner_id,
       };
       await upsertTarea(tarea);
+      insertadas++;
     }
 
-    // Guardar el momento actual como nueva marca de sincronización
-    await guardarConfiguracion(CLAVE_ULTIMA_SYNC, new Date().toISOString());
-    console.log(`[sync] Sincronización completada. ${data.length} tareas insertadas/actualizadas en SQLite.`);
+    console.log(`[sync] Sincronización completada. ${insertadas} insertadas/actualizadas, ${saltadas} saltadas (editadas offline).`);
   } catch (e) {
     console.warn('[sync] Error en descargarCambiosRemotos:', e);
   }
@@ -216,7 +199,6 @@ export async function descargarCambiosRemotos(userId: string): Promise<void> {
 
 /**
  * Sincronización completa: sube pendientes + descarga novedades.
- * Es la función principal que se llama al iniciar la app con sesión.
  */
 export async function sincronizarCompleto(userId: string): Promise<void> {
   await sincronizarPendientes(userId);
