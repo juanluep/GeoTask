@@ -246,7 +246,7 @@ export async function obtenerEstadoGeocercas(): Promise<{
  * Registra un log de depuración en SecureStore para poder consultarlo desde la UI.
  * Útil para ver qué pasó en background sin tener el cable conectado.
  */
-async function registrarDebugLog(mensaje: string): Promise<void> {
+export async function registrarDebugLog(mensaje: string): Promise<void> {
   try {
     const logsPrevios = await SecureStore.getItemAsync('gt_debug_logs');
     const logs = logsPrevios ? JSON.parse(logsPrevios) : [];
