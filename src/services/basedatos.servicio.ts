@@ -535,27 +535,75 @@ export async function marcarTareaSincronizada(id: string): Promise<void> {
  */
 export async function upsertTarea(tarea: Tarea): Promise<void> {
   const bd = await obtenerBD();
-  await bd.runAsync(
-    `INSERT OR REPLACE INTO tareas (
-      id, titulo, descripcion, categoria_id,
-      latitud, longitud, direccion, nombre_lugar, osm_id,
-      radio_proximidad, geocerca_activa, completada, prioridad,
-      fecha_creacion, fecha_completada, fecha_limite, fotos,
-      plantilla_id, lista_id, creado_por, sincronizado
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-    [
-      tarea.id, tarea.titulo, tarea.descripcion, tarea.categoriaId,
-      tarea.latitud, tarea.longitud, tarea.direccion,
-      tarea.nombreLugar ?? null, tarea.osmId ?? null,
-      tarea.radioProximidad, tarea.geocercaActiva ? 1 : 0,
-      tarea.completada ? 1 : 0, tarea.prioridad,
-      tarea.fechaCreacion, tarea.fechaCompletada ?? null,
-      tarea.fechaLimite ?? null,
-      JSON.stringify(tarea.fotos ?? []),
-      tarea.plantillaId ?? null, tarea.listaId ?? null,
-      tarea.creadoPor ?? null,
-    ]
-  );
+
+  // Sanitizamos TODOS los parámetros con aSqlParam para evitar
+  // "Cannot convert [object Object] to a Kotlin type" en New Architecture.
+  // Supabase puede devolver arrays u objetos en campos JSON; aSqlParam
+  // los serializa como string o los convierte a null seguros.
+  const params = [
+    aSqlParam(tarea.id),
+    aSqlParam(tarea.titulo),
+    aSqlParam(tarea.descripcion),
+    aSqlParam(tarea.categoriaId),
+    aSqlParam(tarea.latitud),
+    aSqlParam(tarea.longitud),
+    aSqlParam(tarea.direccion),
+    aSqlParam(tarea.nombreLugar),
+    aSqlParam(tarea.osmId),
+    aSqlParam(tarea.radioProximidad),
+    aSqlParam(tarea.geocercaActiva ? 1 : 0),
+    aSqlParam(tarea.completada ? 1 : 0),
+    aSqlParam(tarea.prioridad),
+    aSqlParam(tarea.fechaCreacion),
+    aSqlParam(tarea.fechaCompletada),
+    aSqlParam(tarea.fechaLimite),
+    aSqlParam(tarea.fotos != null ? JSON.stringify(tarea.fotos) : '[]'),
+    aSqlParam(tarea.plantillaId),
+    aSqlParam(tarea.listaId),
+    aSqlParam(tarea.creadoPor),
+  ];
+
+  try {
+    await bd.runAsync(
+      `INSERT OR REPLACE INTO tareas (
+        id, titulo, descripcion, categoria_id,
+        latitud, longitud, direccion, nombre_lugar, osm_id,
+        radio_proximidad, geocerca_activa, completada, prioridad,
+        fecha_creacion, fecha_completada, fecha_limite, fotos,
+        plantilla_id, lista_id, creado_por, sincronizado
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      params
+    );
+  } catch (err: any) {
+    // Logging de diagnóstico: si falla por tipo inválido, sabemos qué campo era.
+    console.error('[bd] upsertTarea FALLÓ para tarea:', tarea.id, tarea.titulo);
+    console.error('[bd] Error:', err.message);
+    // Revisar tipos de cada campo para encontrar el culpable
+    const tipos = {
+      id: typeof tarea.id,
+      titulo: typeof tarea.titulo,
+      descripcion: typeof tarea.descripcion,
+      categoriaId: typeof tarea.categoriaId,
+      latitud: typeof tarea.latitud,
+      longitud: typeof tarea.longitud,
+      direccion: typeof tarea.direccion,
+      nombreLugar: typeof tarea.nombreLugar,
+      osmId: typeof tarea.osmId,
+      radioProximidad: typeof tarea.radioProximidad,
+      geocercaActiva: typeof tarea.geocercaActiva,
+      completada: typeof tarea.completada,
+      prioridad: typeof tarea.prioridad,
+      fechaCreacion: typeof tarea.fechaCreacion,
+      fechaCompletada: typeof tarea.fechaCompletada,
+      fechaLimite: typeof tarea.fechaLimite,
+      fotos: typeof tarea.fotos,
+      plantillaId: typeof tarea.plantillaId,
+      listaId: typeof tarea.listaId,
+      creadoPor: typeof tarea.creadoPor,
+    };
+    console.error('[bd] Tipos de campos:', JSON.stringify(tipos));
+    throw err;
+  }
 }
 
 // ──────────────────────────────────────────────
