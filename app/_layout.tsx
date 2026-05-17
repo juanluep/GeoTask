@@ -37,7 +37,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { inicializarBaseDatos, borrarDatosLocales } from '../src/services/basedatos.servicio';
 import { configurarNotificaciones, solicitarPermisoNotificaciones } from '../src/services/notificacion.servicio';
-import { registrarTodasLasGeocercas } from '../src/services/geocerca.servicio';
+import { registrarTodasLasGeocercas, iniciarServicioForeground } from '../src/services/geocerca.servicio';
 import { inicializarTablaHorarios } from '../src/services/horarios.servicio';
 import * as Location from 'expo-location';
 import { useAuthStore } from '../src/stores/useAuthStore';
@@ -169,21 +169,24 @@ export default function LayoutRaiz() {
           return;
         }
 
-        // 3. Ubicación en segundo plano (necesario SOLO para geocercas nativas del SO)
+        // 3. Ubicación en segundo plano (necesario para foreground service + geocercas)
         const bg = await Location.requestBackgroundPermissionsAsync();
         if (bg.status === 'granted') {
-          // Solo registramos geocercas si el usuario está autenticado.
-          // Si no hay sesión, la BD ya fue limpiada en cargarRecursos,
-          // pero este doble chequeo evita cualquier registro accidental.
           const uid = useAuthStore.getState().userId;
           if (uid) {
+            // Iniciar foreground service (notificación persistente + ubicaciones cada ~20s)
+            // Este es el mecanismo PRINCIPAL para detectar proximidad en background.
+            await iniciarServicioForeground();
+            console.log('[layout] Foreground service de ubicación iniciado.');
+
+            // Geofencing nativo como fallback secundario
             await registrarTodasLasGeocercas();
-            console.log('[layout] Geocercas nativas registradas.');
+            console.log('[layout] Geocercas nativas registradas (fallback).');
           } else {
-            console.log('[layout] Permiso background concedido pero sin sesión. No se registran geocercas.');
+            console.log('[layout] Permiso background concedido pero sin sesión. No se inicia servicio.');
           }
         } else {
-          console.log('[layout] Permiso background denegado. Activo fallback useProximidad.');
+          console.log('[layout] Permiso background denegado. Solo activo fallback useProximidad.');
         }
       } catch (e) {
         console.warn('[layout] Error solicitando permisos:', e);
@@ -232,6 +235,8 @@ export default function LayoutRaiz() {
           // Si no hay sesión, la app debería estar en estado limpio
           // (sin tareas locales) tras el borrado de datos al arrancar.
           if (userId) {
+            // Asegurar que el foreground service sigue activo
+            iniciarServicioForeground().catch(() => {});
             registrarTodasLasGeocercas().catch(() => {});
             sincronizarCompleto(userId)
               .then(async () => {

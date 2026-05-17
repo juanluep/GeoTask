@@ -40,8 +40,18 @@ import type { Tarea } from '../models/tarea.modelo';
 // ──────────────────────────────────────────────
 export const NOMBRE_TAREA_GEOCERCA = 'GEOTASK_GEOCERCA_MONITOR';
 
+/** Nombre de la tarea de foreground service (actualizaciones de ubicación en background) */
+const NOMBRE_TAREA_FOREGROUND = 'GEOTASK_FOREGROUND_LOCATION';
+
 /** Número máximo de geocercas simultáneas (límite de iOS) */
 const MAX_GEOCERCAS = 20;
+
+/** Factor de margen para el radio de proximidad (90%) */
+const FACTOR_MARGEN = 0.9;
+
+/** Cooldown en ms: no notificar la misma tarea dos veces en menos de 30 min */
+const COOLDOWN_MS = 30 * 60 * 1000;
+const PREFIJO_COOLDOWN = 'gt_cooldown_';
 
 // ──────────────────────────────────────────────
 // 🔧 SECCIÓN: Definición de la tarea background
@@ -110,6 +120,79 @@ TaskManager.defineTask(NOMBRE_TAREA_GEOCERCA, async ({ data, error }: any) => {
   } catch (err) {
     console.error('[geocerca] Error al procesar entrada:', err);
     await registrarDebugLog(`Error procesando entrada: ${err}`);
+  }
+});
+
+// ──────────────────────────────────────────────
+// 📍 SECCIÓN: Foreground Service (actualizaciones de ubicación)
+// Fallback principal para Android cuando la app está cerrada.
+// Mantiene una notificación persistente y recibe ubicaciones cada ~20s.
+// ──────────────────────────────────────────────
+
+function distanciaMetros(
+  lat1: number, lon1: number, lat2: number, lon2: number
+): number {
+  const R = 6_371_000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function verificarCooldown(tareaId: string): Promise<boolean> {
+  try {
+    const ultimo = await SecureStore.getItemAsync(PREFIJO_COOLDOWN + tareaId);
+    if (!ultimo) return false;
+    return Date.now() - parseInt(ultimo, 10) < COOLDOWN_MS;
+  } catch { return false; }
+}
+
+async function marcarCooldown(tareaId: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(PREFIJO_COOLDOWN + tareaId, Date.now().toString());
+  } catch { /* ignorar */ }
+}
+
+TaskManager.defineTask(NOMBRE_TAREA_FOREGROUND, async ({ data, error }: any) => {
+  if (error) {
+    console.error('[foreground] Error:', error.message);
+    await registrarDebugLog(`Foreground error: ${error.message}`);
+    return;
+  }
+
+  const { locations } = data;
+  if (!locations || locations.length === 0) return;
+
+  const { latitude, longitude } = locations[0].coords;
+  console.log(`[foreground] Ubicación: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+
+  try {
+    const tareas = await obtenerTareas(false);
+    const pendientes = tareas.filter(
+      (t) => !t.completada && t.geocercaActiva && t.latitud !== 0 && t.longitud !== 0
+    );
+
+    for (const tarea of pendientes) {
+      const dist = distanciaMetros(latitude, longitude, tarea.latitud, tarea.longitud);
+      const umbral = tarea.radioProximidad * FACTOR_MARGEN;
+
+      if (dist <= umbral) {
+        const enCooldown = await verificarCooldown(tarea.id);
+        if (!enCooldown) {
+          console.log(`[foreground] DENTRO DEL RADIO: "${tarea.titulo}" (${Math.round(dist)}m)`);
+          await enviarNotificacionProximidad(tarea, Math.round(dist));
+          await marcarCooldown(tarea.id);
+          await registrarDebugLog(`Notif foreground: ${tarea.titulo} (${Math.round(dist)}m)`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[foreground] Error evaluando proximidad:', err);
+    await registrarDebugLog(`Error foreground eval: ${err}`);
   }
 });
 
@@ -219,6 +302,82 @@ export async function detenerGeofencing(): Promise<void> {
     }
   } catch (error) {
     console.warn('[geocerca] Error al detener geofencing:', error);
+  }
+}
+
+// ──────────────────────────────────────────────
+// 🔔 SECCIÓN: Foreground Service (Android)
+// Mantiene una notificación persistente y recibe ubicaciones cada ~20s.
+// Es el mecanismo PRINCIPAL para detectar proximidad en background.
+// ──────────────────────────────────────────────
+
+/**
+ * Inicia el foreground service de actualizaciones de ubicación.
+ * Muestra una notificación persistente al usuario.
+ * Se llama desde _layout.tsx al arrancar si hay sesión y permisos.
+ */
+export async function iniciarServicioForeground(): Promise<void> {
+  try {
+    // Verificar que no está ya iniciado
+    const yaActivo = await Location.hasStartedLocationUpdatesAsync(NOMBRE_TAREA_FOREGROUND);
+    if (yaActivo) {
+      console.log('[foreground] Servicio ya activo. No se reinicia.');
+      return;
+    }
+
+    // Verificar permisos
+    const bg = await Location.getBackgroundPermissionsAsync();
+    if (bg.status !== 'granted') {
+      console.log('[foreground] Sin permiso background. No se inicia servicio.');
+      await registrarDebugLog('Foreground: sin permiso background');
+      return;
+    }
+
+    await Location.startLocationUpdatesAsync(NOMBRE_TAREA_FOREGROUND, {
+      accuracy: Location.Accuracy.Balanced,
+      timeInterval: 20_000,          // mínimo ~20s entre actualizaciones
+      distanceInterval: 0,            // siempre notificar, aunque no se mueva
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: 'GeoTask vigilando tareas cercanas',
+        notificationBody: 'Detectando cuando pasas cerca de lugares con tareas pendientes',
+        notificationColor: '#1d4ed8',
+      },
+    });
+
+    console.log('[foreground] Servicio iniciado correctamente.');
+    await registrarDebugLog('Foreground service iniciado');
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[foreground] Error al iniciar servicio:', msg);
+    await registrarDebugLog(`Error iniciar foreground: ${msg}`);
+  }
+}
+
+/**
+ * Detiene el foreground service.
+ */
+export async function detenerServicioForeground(): Promise<void> {
+  try {
+    const activo = await Location.hasStartedLocationUpdatesAsync(NOMBRE_TAREA_FOREGROUND);
+    if (activo) {
+      await Location.stopLocationUpdatesAsync(NOMBRE_TAREA_FOREGROUND);
+      console.log('[foreground] Servicio detenido.');
+      await registrarDebugLog('Foreground service detenido');
+    }
+  } catch (error) {
+    console.warn('[foreground] Error al detener servicio:', error);
+  }
+}
+
+/**
+ * Devuelve true si el foreground service está activo.
+ */
+export async function estaServicioForegroundActivo(): Promise<boolean> {
+  try {
+    return await Location.hasStartedLocationUpdatesAsync(NOMBRE_TAREA_FOREGROUND);
+  } catch {
+    return false;
   }
 }
 

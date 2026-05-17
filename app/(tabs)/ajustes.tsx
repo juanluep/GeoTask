@@ -46,7 +46,10 @@ import {
   obtenerEstadoGeocercas, 
   obtenerDebugLogs, 
   limpiarDebugLogs,
-  registrarTodasLasGeocercas 
+  registrarTodasLasGeocercas,
+  iniciarServicioForeground,
+  detenerServicioForeground,
+  estaServicioForegroundActivo,
 } from '../../src/services/geocerca.servicio';
 import { enviarNotificacionPrueba } from '../../src/services/notificacion.servicio';
 
@@ -68,6 +71,7 @@ export default function PantallaAjustes() {
   
   // Estado para diagnóstico
   const [estadoGeocercas, setEstadoGeocercas] = useState<{ activo: boolean; registradas: number; permisoBackground: string } | null>(null);
+  const [foregroundActivo, setForegroundActivo] = useState<boolean | null>(null);
   const [debugLogs, setDebugLogs] = useState<{t: string, m: string}[]>([]);
   const [mostrandoLogs, setMostrandoLogs] = useState(false);
 
@@ -85,9 +89,11 @@ export default function PantallaAjustes() {
       const stats = await obtenerEstadisticas();
       setEstadisticas(stats);
       
-      // También cargar estado de geocercas
+      // También cargar estado de geocercas y foreground service
       const estado = await obtenerEstadoGeocercas();
       setEstadoGeocercas(estado);
+      const fgActivo = await estaServicioForegroundActivo();
+      setForegroundActivo(fgActivo);
       const logs = await obtenerDebugLogs();
       setDebugLogs(logs);
     } catch (error) {
@@ -530,6 +536,43 @@ export default function PantallaAjustes() {
               }}
             >
               <Text style={estilos.textoBotonPequeno}>Reiniciar</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Separador />
+
+          <View style={estilos.filaAccion}>
+            <Ionicons 
+              name={foregroundActivo ? "navigate-outline" : "navigate"} 
+              size={20} 
+              color={foregroundActivo ? Colores.exito : Colores.error} 
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={estilos.etiquetaAjuste}>Servicio en segundo plano</Text>
+              <Text style={[estilos.subtextoAjuste, { color: foregroundActivo ? Colores.exito : Colores.error }]}>
+                {foregroundActivo 
+                  ? 'Activo (notificación persistente + ubicación cada ~20s)' 
+                  : 'Inactivo (la app no detectará cercanías cerrada)'}
+              </Text>
+            </View>
+            <TouchableOpacity 
+              style={estilos.botonPequeno} 
+              onPress={async () => {
+                if (foregroundActivo) {
+                  await detenerServicioForeground();
+                  setForegroundActivo(false);
+                  Alert.alert('Detenido', 'Se ha detenido el servicio de segundo plano.');
+                } else {
+                  await iniciarServicioForeground();
+                  const activo = await estaServicioForegroundActivo();
+                  setForegroundActivo(activo);
+                  Alert.alert(activo ? 'Iniciado' : 'Error', activo 
+                    ? 'El servicio de segundo plano ha sido iniciado.' 
+                    : 'No se pudo iniciar el servicio. Verifica permisos.');
+                }
+              }}
+            >
+              <Text style={estilos.textoBotonPequeno}>{foregroundActivo ? 'Detener' : 'Iniciar'}</Text>
             </TouchableOpacity>
           </View>
 
