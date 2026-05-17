@@ -25,11 +25,8 @@
  */
 
 import * as Location from 'expo-location';
-import * as TaskManager from 'expo-task-manager';
 import * as SecureStore from 'expo-secure-store';
-import { obtenerTareas, leerConfiguracion } from './basedatos.servicio';
-import { enviarNotificacionProximidad } from './notificacion.servicio';
-import { obtenerHorario } from './horarios.servicio';
+import { obtenerTareas } from './basedatos.servicio';
 import type { Tarea } from '../models/tarea.modelo';
 
 // ──────────────────────────────────────────────
@@ -46,170 +43,12 @@ const NOMBRE_TAREA_FOREGROUND = 'GEOTASK_FOREGROUND_LOCATION';
 /** Número máximo de geocercas simultáneas (límite de iOS) */
 const MAX_GEOCERCAS = 20;
 
-/** Factor de margen para el radio de proximidad (90%) */
-const FACTOR_MARGEN = 0.9;
-
-/** Cooldown en ms: no notificar la misma tarea dos veces en menos de 30 min */
-const COOLDOWN_MS = 30 * 60 * 1000;
-const PREFIJO_COOLDOWN = 'gt_cooldown_';
-
-// ──────────────────────────────────────────────
-// 🔧 SECCIÓN: Definición de la tarea background
-// IMPORTANTE: defineTask debe ejecutarse en el nivel raíz del módulo,
-// NO dentro de una función o componente. Expo TaskManager lo registra
-// al cargarse el bundle de JavaScript, antes de que React monte.
-// ──────────────────────────────────────────────
-
-/**
- * Define la tarea background que procesa las entradas/salidas de geocercas.
- *
- * Esta función se ejecuta en segundo plano cuando el SO detecta que el
- * usuario ha entrado o salido de una geocerca registrada.
- * El contexto de ejecución es limitado (sin UI, sin estado React),
- * pero sí puede hacer fetch, leer SQLite y enviar notificaciones.
- */
-TaskManager.defineTask(NOMBRE_TAREA_GEOCERCA, async ({ data, error }: any) => {
-  if (error) {
-    console.error('[geocerca] Error en tarea background:', error.message);
-    await registrarDebugLog(`Error en tarea: ${error.message}`);
-    return;
-  }
-
-  const { eventType, region } = data;
-  const tipoEvento = eventType === Location.GeofencingEventType.Enter ? 'ENTRADA' : 'SALIDA';
-  
-  console.log(`[geocerca] Evento ${tipoEvento} detectado en región: ${region.identifier}`);
-  await registrarDebugLog(`Evento ${tipoEvento}: ${region.identifier}`);
-
-  // Solo procesamos ENTRADAS, no salidas
-  if (eventType !== Location.GeofencingEventType.Enter) return;
-
-  try {
-    const tareasPendientes = await obtenerTareas(false);
-    const tarea = tareasPendientes.find((t) => t.id === region.identifier);
-
-    if (!tarea) {
-      console.warn('[geocerca] No se encontró la tarea para la región:', region.identifier);
-      await registrarDebugLog(`Tarea no encontrada: ${region.identifier}`);
-      return;
-    }
-
-    if (!tarea.geocercaActiva) {
-      console.log(`[geocerca] Ignorando "${tarea.titulo}" — geocerca desactivada.`);
-      return;
-    }
-
-    const verificarHorarios = await leerConfiguracion<boolean>('verificarHorarios');
-    if (verificarHorarios && tarea.osmId) {
-      try {
-        const horario = await obtenerHorario(tarea.osmId, tarea.latitud, tarea.longitud);
-        if (!horario.sinDatos && !horario.abierto) {
-          console.log(`[geocerca] No se notifica "${tarea.titulo}" — establecimiento cerrado.`);
-          await registrarDebugLog(`Establecimiento cerrado: ${tarea.titulo}`);
-          return;
-        }
-      } catch (errHorario) {
-        // Si la API de horarios falla (sin red, timeout), notificamos igualmente
-        console.warn('[geocerca] Error al verificar horario, se notifica de todas formas:', errHorario);
-        await registrarDebugLog(`Error horario (notificando igual): ${tarea.titulo}`);
-      }
-    }
-
-    await enviarNotificacionProximidad(tarea);
-    await registrarDebugLog(`Notificación enviada: ${tarea.titulo}`);
-  } catch (err) {
-    console.error('[geocerca] Error al procesar entrada:', err);
-    await registrarDebugLog(`Error procesando entrada: ${err}`);
-  }
-});
-
-// ──────────────────────────────────────────────
-// 📍 SECCIÓN: Foreground Service (actualizaciones de ubicación)
-// Fallback principal para Android cuando la app está cerrada.
-// Mantiene una notificación persistente y recibe ubicaciones cada ~20s.
-// ──────────────────────────────────────────────
-
-function distanciaMetros(
-  lat1: number, lon1: number, lat2: number, lon2: number
-): number {
-  const R = 6_371_000;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-async function verificarCooldown(tareaId: string): Promise<boolean> {
-  try {
-    const ultimo = await SecureStore.getItemAsync(PREFIJO_COOLDOWN + tareaId);
-    if (!ultimo) return false;
-    return Date.now() - parseInt(ultimo, 10) < COOLDOWN_MS;
-  } catch { return false; }
-}
-
-async function marcarCooldown(tareaId: string): Promise<void> {
-  try {
-    await SecureStore.setItemAsync(PREFIJO_COOLDOWN + tareaId, Date.now().toString());
-  } catch { /* ignorar */ }
-}
-
-TaskManager.defineTask(NOMBRE_TAREA_FOREGROUND, async ({ data, error }: any) => {
-  // Logging de diagnóstico crítico: verificar si la tarea se ejecuta en background
-  console.log('[foreground] TASK EJECUTADA. data presente:', !!data, 'error:', !!error);
-  await registrarDebugLog('Foreground task ejecutada');
-
-  if (error) {
-    console.error('[foreground] Error en task:', error.message);
-    await registrarDebugLog(`Foreground task error: ${error.message}`);
-    return;
-  }
-
-  const { locations } = data || {};
-  if (!locations || locations.length === 0) {
-    console.warn('[foreground] Task ejecutada pero sin locations. data:', JSON.stringify(data));
-    await registrarDebugLog('Foreground task: sin locations');
-    return;
-  }
-
-  const { latitude, longitude } = locations[0].coords;
-  console.log(`[foreground] Ubicación recibida: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
-  await registrarDebugLog(`FG loc: ${latitude.toFixed(4)},${longitude.toFixed(4)}`);
-
-  try {
-    const tareas = await obtenerTareas(false);
-    const pendientes = tareas.filter(
-      (t) => !t.completada && t.geocercaActiva && t.latitud !== 0 && t.longitud !== 0
-    );
-
-    console.log(`[foreground] Evaluando ${pendientes.length} tareas...`);
-
-    for (const tarea of pendientes) {
-      const dist = distanciaMetros(latitude, longitude, tarea.latitud, tarea.longitud);
-      const umbral = tarea.radioProximidad * FACTOR_MARGEN;
-
-      console.log(`[foreground]  → "${tarea.titulo}" dist=${Math.round(dist)}m umbral=${Math.round(umbral)}m`);
-
-      if (dist <= umbral) {
-        const enCooldown = await verificarCooldown(tarea.id);
-        if (!enCooldown) {
-          console.log(`[foreground] ✓ DENTRO DEL RADIO: "${tarea.titulo}" (${Math.round(dist)}m)`);
-          await enviarNotificacionProximidad(tarea, Math.round(dist));
-          await marcarCooldown(tarea.id);
-          await registrarDebugLog(`Notif FG: ${tarea.titulo} (${Math.round(dist)}m)`);
-        } else {
-          console.log(`[foreground] ✗ Cooldown: "${tarea.titulo}"`);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[foreground] Error evaluando proximidad:', err);
-    await registrarDebugLog(`Error FG eval: ${err}`);
-  }
-});
+// NOTA: Los defineTask de TaskManager se han movido a src/tasks.ts
+// para asegurar que se ejecuten durante la fase de inicialización del bundle,
+// antes de que cualquier componente React se monte.
+//
+// TaskManager.defineTask(NOMBRE_TAREA_GEOCERCA) → src/tasks.ts
+// TaskManager.defineTask(NOMBRE_TAREA_FOREGROUND) → src/tasks.ts
 
 // ──────────────────────────────────────────────
 // 🚀 SECCIÓN: Registro de geocercas

@@ -23,6 +23,12 @@
  * ============================================================
  */
 
+// CRÍTICO: importar tareas background ANTES que cualquier otro módulo.
+// TaskManager.defineTask DEBE ejecutarse durante la fase de inicialización
+// del bundle, antes de que cualquier tarea background del SO intente ejecutarse.
+// Si no, el TaskManager nativo dispara "Task is not defined".
+import '../src/tasks';
+
 import { useEffect, useRef, useState } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { Stack } from 'expo-router';
@@ -42,7 +48,6 @@ import { inicializarTablaHorarios } from '../src/services/horarios.servicio';
 import * as Location from 'expo-location';
 import { useAuthStore } from '../src/stores/useAuthStore';
 import { sincronizarCompleto } from '../src/services/sincronizacion.servicio';
-import { registrarBackgroundFetch } from '../src/services/background.servicio';
 import { useTareaStore } from '../src/stores/useTareaStore';
 import { useProximidad } from '../src/hooks/useProximidad';
 import '../global.css';
@@ -91,13 +96,6 @@ export default function LayoutRaiz() {
         await useAuthStore.getState().inicializarSesion();
 
         const userId = useAuthStore.getState().userId;
-
-        // Registrar background fetch SIEMPRE (independientemente de sesión).
-        // Si no hay sesión, la tarea se ejecutará pero no encontrará tareas
-        // (la BD estará vacía tras el borrado de datos residuales).
-        registrarBackgroundFetch().catch((err) => {
-          console.warn('[layout] Error registrando background fetch:', err);
-        });
 
         if (userId) {
           // Si hay sesión activa, sincronizar tareas pendientes y descargar novedades.
