@@ -303,6 +303,33 @@ function aSqlParam(valor: unknown): string | number | null {
   }
 }
 
+/**
+ * Escapa un valor JavaScript para usarlo en una query SQL string plana.
+ * Usado por upsertTarea como workaround para el bug de New Architecture
+ * donde runAsync con parámetros bind lanza "Cannot convert [object Object]".
+ *
+ * - null/undefined → 'NULL'
+ * - boolean → '0' / '1'
+ * - number → String(numero)
+ * - string → entre comillas simples, con ' → ''
+ * - array/objeto → JSON.stringify, luego entre comillas simples
+ */
+function sqlEscape(valor: unknown): string {
+  if (valor === null || valor === undefined) return 'NULL';
+  if (typeof valor === 'boolean') return valor ? '1' : '0';
+  if (typeof valor === 'number') return Number.isFinite(valor) ? String(valor) : 'NULL';
+  if (typeof valor === 'string') {
+    // SQLite escapa comillas simples duplicándolas
+    return "'" + valor.replace(/'/g, "''") + "'";
+  }
+  // Arrays y objetos: serializar como JSON y tratar como string
+  try {
+    return "'" + JSON.stringify(valor).replace(/'/g, "''") + "'";
+  } catch {
+    return 'NULL';
+  }
+}
+
 export async function crearTarea(id: string, datos: CrearTareaDTO): Promise<void> {
   const bd = await obtenerBD();
   const ahora = new Date().toISOString();
@@ -536,72 +563,49 @@ export async function marcarTareaSincronizada(id: string): Promise<void> {
 export async function upsertTarea(tarea: Tarea): Promise<void> {
   const bd = await obtenerBD();
 
-  // Sanitizamos TODOS los parámetros con aSqlParam para evitar
-  // "Cannot convert [object Object] to a Kotlin type" en New Architecture.
-  // Supabase puede devolver arrays u objetos en campos JSON; aSqlParam
-  // los serializa como string o los convierte a null seguros.
-  const params = [
-    aSqlParam(tarea.id),
-    aSqlParam(tarea.titulo),
-    aSqlParam(tarea.descripcion),
-    aSqlParam(tarea.categoriaId),
-    aSqlParam(tarea.latitud),
-    aSqlParam(tarea.longitud),
-    aSqlParam(tarea.direccion),
-    aSqlParam(tarea.nombreLugar),
-    aSqlParam(tarea.osmId),
-    aSqlParam(tarea.radioProximidad),
-    aSqlParam(tarea.geocercaActiva ? 1 : 0),
-    aSqlParam(tarea.completada ? 1 : 0),
-    aSqlParam(tarea.prioridad),
-    aSqlParam(tarea.fechaCreacion),
-    aSqlParam(tarea.fechaCompletada),
-    aSqlParam(tarea.fechaLimite),
-    aSqlParam(tarea.fotos != null ? JSON.stringify(tarea.fotos) : '[]'),
-    aSqlParam(tarea.plantillaId),
-    aSqlParam(tarea.listaId),
-    aSqlParam(tarea.creadoPor),
-  ];
+  // WORKAROUND: en Expo SDK 52 con New Architecture, runAsync con
+  // parámetros bind lanza "Cannot convert [object Object]" al recibir
+  // arrays u objetos a través del bridge JSI, aunque teóricamente ya
+  // los hayamos serializado con aSqlParam. Usamos execAsync con la
+  // query construida como string plano (valores escapados con sqlEscape).
+  // Los datos vienen de Supabase (confiables) o de nuestro modelo tipado,
+  // por lo que el riesgo de SQL injection es mínimo.
+  const sql = `INSERT OR REPLACE INTO tareas (
+    id, titulo, descripcion, categoria_id,
+    latitud, longitud, direccion, nombre_lugar, osm_id,
+    radio_proximidad, geocerca_activa, completada, prioridad,
+    fecha_creacion, fecha_completada, fecha_limite, fotos,
+    plantilla_id, lista_id, creado_por, sincronizado
+  ) VALUES (
+    ${sqlEscape(tarea.id)},
+    ${sqlEscape(tarea.titulo)},
+    ${sqlEscape(tarea.descripcion)},
+    ${sqlEscape(tarea.categoriaId)},
+    ${sqlEscape(tarea.latitud)},
+    ${sqlEscape(tarea.longitud)},
+    ${sqlEscape(tarea.direccion)},
+    ${sqlEscape(tarea.nombreLugar)},
+    ${sqlEscape(tarea.osmId)},
+    ${sqlEscape(tarea.radioProximidad)},
+    ${sqlEscape(tarea.geocercaActiva ? 1 : 0)},
+    ${sqlEscape(tarea.completada ? 1 : 0)},
+    ${sqlEscape(tarea.prioridad)},
+    ${sqlEscape(tarea.fechaCreacion)},
+    ${sqlEscape(tarea.fechaCompletada)},
+    ${sqlEscape(tarea.fechaLimite)},
+    ${sqlEscape(tarea.fotos != null ? JSON.stringify(tarea.fotos) : '[]')},
+    ${sqlEscape(tarea.plantillaId)},
+    ${sqlEscape(tarea.listaId)},
+    ${sqlEscape(tarea.creadoPor)},
+    1
+  )`;
 
   try {
-    await bd.runAsync(
-      `INSERT OR REPLACE INTO tareas (
-        id, titulo, descripcion, categoria_id,
-        latitud, longitud, direccion, nombre_lugar, osm_id,
-        radio_proximidad, geocerca_activa, completada, prioridad,
-        fecha_creacion, fecha_completada, fecha_limite, fotos,
-        plantilla_id, lista_id, creado_por, sincronizado
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      params
-    );
+    await bd.execAsync(sql);
   } catch (err: any) {
-    // Logging de diagnóstico: si falla por tipo inválido, sabemos qué campo era.
     console.error('[bd] upsertTarea FALLÓ para tarea:', tarea.id, tarea.titulo);
     console.error('[bd] Error:', err.message);
-    // Revisar tipos de cada campo para encontrar el culpable
-    const tipos = {
-      id: typeof tarea.id,
-      titulo: typeof tarea.titulo,
-      descripcion: typeof tarea.descripcion,
-      categoriaId: typeof tarea.categoriaId,
-      latitud: typeof tarea.latitud,
-      longitud: typeof tarea.longitud,
-      direccion: typeof tarea.direccion,
-      nombreLugar: typeof tarea.nombreLugar,
-      osmId: typeof tarea.osmId,
-      radioProximidad: typeof tarea.radioProximidad,
-      geocercaActiva: typeof tarea.geocercaActiva,
-      completada: typeof tarea.completada,
-      prioridad: typeof tarea.prioridad,
-      fechaCreacion: typeof tarea.fechaCreacion,
-      fechaCompletada: typeof tarea.fechaCompletada,
-      fechaLimite: typeof tarea.fechaLimite,
-      fotos: typeof tarea.fotos,
-      plantillaId: typeof tarea.plantillaId,
-      listaId: typeof tarea.listaId,
-      creadoPor: typeof tarea.creadoPor,
-    };
-    console.error('[bd] Tipos de campos:', JSON.stringify(tipos));
+    console.error('[bd] SQL (primeros 200 chars):', sql.slice(0, 200));
     throw err;
   }
 }
